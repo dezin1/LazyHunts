@@ -28,7 +28,7 @@
     "publish": {
       "provider": "github",
       "owner": "dezin1",
-      "repo": "huntera-multiconta"
+      "repo": "MultiAccount"
     },
     "win": {
       "target": [
