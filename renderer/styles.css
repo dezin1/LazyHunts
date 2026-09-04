@@ -1,0 +1,549 @@
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  background: #14161d;
+  color: #eceef3;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+#app {
+  display: flex;
+  height: 100%;
+}
+
+/* ---------- trilha de ícones (esquerda) ---------- */
+#iconRail {
+  width: 52px;
+  flex-shrink: 0;
+  background: #0f111780;
+  background: #0f1117;
+  border-right: 1px solid #23273299;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0;
+  gap: 8px;
+}
+.railBtn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #9aa1b3;
+  font-size: 17px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.railBtn:hover { background: #1e2230; color: #eceef3; }
+.railBtn.on {
+  background: #3a2c14;
+  border-color: #e0ac4c;
+  color: #e0ac4c;
+}
+
+/* ---------- barra lateral (contas) ---------- */
+#sidebar {
+  width: 250px;
+  flex-shrink: 0;
+  background: #171a22;
+  border-right: 1px solid #23273299;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#sidebarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 12px 10px;
+  flex-shrink: 0;
+}
+#brand {
+  font-size: 13px;
+  font-weight: 600;
+  color: #eceef3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#addTabBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  border: 1px solid #2a2f3d;
+  background: #232733;
+  color: #e0ac4c;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+#addTabBtn:hover { border-color: #e0ac4c; }
+#addTabBtn:disabled { opacity: 0.35; cursor: default; border-color: #2a2f3d; }
+
+#accountsGroup {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 4px 8px;
+}
+
+.groupHeader {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: #7d8496;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 6px 4px;
+  cursor: pointer;
+}
+.groupHeader .chevron {
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+.groupHeader.collapsed .chevron { transform: rotate(-90deg); }
+.groupTitle { font-weight: 700; }
+.groupCount { margin-left: auto; opacity: 0.8; text-transform: none; letter-spacing: 0; }
+
+#tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+#tabs.collapsed { display: none; }
+
+.acct {
+  border-radius: 9px;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  position: relative;
+}
+.acct:hover { background: #1e2230; }
+.acct.active {
+  background: #262b3a;
+  border-left-color: #e0ac4c;
+}
+.acct.active .acctLabel { color: #e0ac4c; }
+
+.acctRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+}
+
+.acctAvatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  color: #14161d;
+  position: relative;
+}
+.acctStatusDot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #5b6070;
+  border: 2px solid #171a22;
+}
+.acctStatusDot.online { background: #59c96e; }
+
+.acctInfo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.acctTopRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.acctLabel {
+  outline: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 20px;
+}
+.acctAutoBtn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #5b6070;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.acctAutoBtn:hover { color: #eceef3; }
+.acctAutoBtn.on { color: #e0ac4c; }
+
+.acctClose {
+  background: none;
+  border: none;
+  color: #7d8496;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  opacity: 0;
+  flex-shrink: 0;
+}
+.acct:hover .acctClose { opacity: 0.7; }
+.acctClose:hover { opacity: 1 !important; color: #e0ac4c; }
+
+.acctSubRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: #7d8496;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.acctDomain { overflow: hidden; text-overflow: ellipsis; }
+.acctUptime { margin-left: auto; flex-shrink: 0; }
+
+/* ---------- painel de automação DEDICADO (v0.4.1) ---------- */
+/* André: "horrível onde você deixou o bot" na v0.4.0 (expandia dentro da
+   própria linha da conta, empurrando as outras pra baixo, espremido).
+   Agora o ⚡ troca o CONTEÚDO do menu lateral inteiro — a lista de contas
+   (#accountsGroup) some, esse painel ocupa o espaço todo, com um "‹
+   Contas" pra voltar. Cabeçalho (#sidebarHeader) e rodapé (#sidebarFooter,
+   com "Iniciar com o sistema"/"Recarregar todas") continuam visíveis os
+   dois — só a área do meio troca de conteúdo. Nunca fica sobreposto em
+   cima da tela do jogo, sempre dentro do próprio menu lateral. */
+#automationPanel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 16px 16px;
+  display: flex;
+  flex-direction: column;
+}
+#automationPanel[hidden] { display: none; }
+
+#automationBackBtn {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: #9aa1b3;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 2px;
+  margin-bottom: 8px;
+}
+#automationBackBtn:hover { color: #e0ac4c; }
+
+.automationHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #23273299;
+  margin-bottom: 4px;
+}
+.automationAvatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 17px;
+  color: #14161d;
+  flex-shrink: 0;
+}
+.automationHeaderText { min-width: 0; }
+.automationTitle {
+  font-size: 15px;
+  font-weight: 700;
+  color: #eceef3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.automationStatusLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: #9aa1b3;
+  margin-top: 4px;
+}
+.autoDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #5b6070;
+  flex-shrink: 0;
+}
+.autoDot.on { background: #34c77b; }
+.autoDot.err { background: #f0555b; }
+#automationCycles { color: #6c7285; }
+#automationStamina { color: #6c7285; }
+
+.automationSection label {
+  display: block;
+  color: #8b90a3;
+  font-size: 11.5px;
+  margin: 14px 0 6px;
+}
+.autoLabelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 6px;
+}
+.autoLabelRow span { color: #8b90a3; font-size: 11.5px; }
+.autoRefreshBtn {
+  background: #101217;
+  border: 1px solid #2a2f3d;
+  color: #9aa1b3;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.autoRefreshBtn:hover { color: #eceef3; border-color: #e0ac4c; }
+
+.automationSection select,
+.automationSection input {
+  width: 100%;
+  background: #12141c;
+  border: 1px solid #2a2f3d;
+  border-radius: 8px;
+  color: #eceef3;
+  padding: 9px 10px;
+  font-size: 12.5px;
+  box-sizing: border-box;
+}
+.automationSection select:focus,
+.automationSection input:focus { border-color: #e0ac4c; outline: none; }
+
+.autoToggleBtn {
+  width: 100%;
+  margin-top: 18px;
+  padding: 12px;
+  border: none;
+  border-radius: 9px;
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.autoToggleBtn.off { background: #3fda8b; color: #06280f; }
+.autoToggleBtn.on { background: #ff6b70; color: #2b0708; }
+.autoToggleBtn:disabled { opacity: 0.5; cursor: default; }
+
+.automationLogSection {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid #23273299;
+}
+.automationLogTitle {
+  color: #6c7285;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  margin-bottom: 9px;
+}
+.autoLog {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.autoLog div {
+  color: #8b90a3;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+#sidebarFooter {
+  flex-shrink: 0;
+  border-top: 1px solid #23273299;
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.switchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #c3c8d6;
+  cursor: pointer;
+}
+.switchRow input[type="checkbox"] {
+  accent-color: #e0ac4c;
+  width: 30px;
+  height: 16px;
+  cursor: pointer;
+}
+#reloadAllBtn {
+  background: #232733;
+  border: 1px solid #2a2f3d;
+  color: #eceef3;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+#reloadAllBtn:hover { border-color: #e0ac4c; color: #e0ac4c; }
+
+/* ---------- área principal ---------- */
+#mainArea {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #1b1f2a;
+  border-bottom: 1px solid #2a2f3d;
+  flex-shrink: 0;
+}
+#navGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+/* Só o grupo de navegação (voltar/avançar/recarregar/URL) trava no modo
+   grade — não faz sentido apontar essas ações pra uma conta só quando as 4
+   estão visíveis ao mesmo tempo. O zoom continua livre: no modo grade ele
+   ajusta as 4 contas juntas, em vez de uma só. */
+#navGroup.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.toolBtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid #2a2f3d;
+  background: #232733;
+  color: #eceef3;
+  font-size: 15px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.toolBtn:hover:not(:disabled) { border-color: #e0ac4c; color: #e0ac4c; }
+.toolBtn:disabled { opacity: 0.35; cursor: default; }
+
+#urlBar {
+  flex: 1;
+  min-width: 0;
+  background: #12141c;
+  border: 1px solid #2a2f3d;
+  border-radius: 7px;
+  color: #c3c8d6;
+  font-size: 12px;
+  padding: 0 10px;
+  height: 28px;
+  outline: none;
+}
+#urlBar:focus { border-color: #e0ac4c; }
+
+#urlGoBtn {
+  background: #232733;
+  border: 1px solid #2a2f3d;
+  color: #eceef3;
+  border-radius: 7px;
+  padding: 0 12px;
+  height: 28px;
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+#urlGoBtn:hover { border-color: #e0ac4c; color: #e0ac4c; }
+
+.zoomControls {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+#zoomLabel {
+  min-width: 44px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid #2a2f3d;
+  background: #232733;
+  color: #c3c8d6;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+#zoomLabel:hover { border-color: #e0ac4c; color: #e0ac4c; }
+
+#statusPill {
+  flex-shrink: 0;
+  background: #232733;
+  border: 1px solid #2a2f3d;
+  color: #9aa1b3;
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+#webviewContainer {
+  flex: 1;
+  position: relative;
+  background: #000;
+  min-height: 0;
+}
+#webviewContainer webview {
+  display: none;
+  width: 100%;
+  height: 100%;
+}
+#webviewContainer webview.active { display: flex; }
+
+#webviewContainer.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+}
+#webviewContainer.grid webview.gridCell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}

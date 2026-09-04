@@ -1,0 +1,48 @@
+{
+  "name": "huntera-multiconta",
+  "version": "0.6.0",
+  "description": "App desktop (Electron) não-oficial pra manter várias contas do Huntera logadas em paralelo, cada uma isolada, numa janela só. Projeto de aprendizado — inspirado no HunteraFarm (descontinuado), reescrito do zero.",
+  "private": true,
+  "main": "main.js",
+  "author": "André Pinheiro Schulz",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "publish": "electron-builder --publish always"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "br.com.andre.hunteramulticonta",
+    "productName": "Huntera Multiconta",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "automation/**/*",
+      "package.json"
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "dezin1",
+      "repo": "huntera-multiconta"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}

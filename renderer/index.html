@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>Huntera Multiconta</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <nav id="iconRail">
+      <button id="railGridBtn" class="railBtn" type="button" title="Ver todas as contas juntas">⊞</button>
+      <button id="railAutomationBtn" class="railBtn" type="button" title="Automação">🤖</button>
+    </nav>
+
+    <aside id="sidebar">
+      <div id="sidebarHeader">
+        <span id="brand">🐺 Huntera Multiconta</span>
+        <button id="addTabBtn" type="button" title="Adicionar conta (máx. 4)">+</button>
+      </div>
+
+      <div id="accountsGroup">
+        <button id="groupHeaderToggle" type="button" class="groupHeader">
+          <span class="chevron">⌄</span>
+          <span class="groupTitle">HUNTERA</span>
+          <span class="groupCount" id="groupCount">0 contas</span>
+        </button>
+        <div id="tabs"></div>
+      </div>
+
+      <div id="automationPanel" hidden>
+        <button id="automationBackBtn" type="button">‹ Contas</button>
+        <div class="automationHeader">
+          <div class="automationAvatar" id="automationAvatar">?</div>
+          <div class="automationHeaderText">
+            <div class="automationTitle" id="automationTitle">Conta</div>
+            <div class="automationStatusLine">
+              <span class="autoDot" id="automationDot"></span>
+              <span id="automationStatusText">—</span>
+              <span id="automationCycles"></span>
+              <span id="automationStamina"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="automationSection">
+          <label class="autoLabelRow">
+            <span>Caçada</span>
+            <button type="button" id="automationRefreshBtn" class="autoRefreshBtn" title="Atualizar lista de caçadas">↻ Atualizar</button>
+          </label>
+          <select id="automationHuntSelect"><option value="">— carregando —</option></select>
+
+          <label>Tamanho do pull</label>
+          <select id="automationTierSelect"></select>
+
+          <label>Sair quando capacidade ≤ (oz)</label>
+          <input type="number" id="automationCapacityInput" min="0" step="1" />
+
+          <label>Voltar a caçar com stamina ≥ (min)</label>
+          <input type="number" id="automationStaminaInput" min="0" step="5" />
+
+          <button type="button" id="automationToggleBtn" class="autoToggleBtn off">Ligar automação</button>
+        </div>
+
+        <div class="automationLogSection">
+          <div class="automationLogTitle">Histórico</div>
+          <div id="automationLog" class="autoLog"></div>
+        </div>
+      </div>
+
+      <div id="sidebarFooter">
+        <label class="switchRow" title="Abrir o app automaticamente ao ligar o computador">
+          <span>Iniciar com o sistema</span>
+          <input type="checkbox" id="autoLaunchToggle" />
+        </label>
+        <button id="reloadAllBtn" type="button">⟳ Recarregar todas</button>
+      </div>
+    </aside>
+
+    <main id="mainArea">
+      <div id="toolbar">
+        <div id="navGroup">
+          <button id="navBackBtn" class="toolBtn" type="button" title="Voltar">‹</button>
+          <button id="navFwdBtn" class="toolBtn" type="button" title="Avançar">›</button>
+          <button id="navReloadBtn" class="toolBtn" type="button" title="Recarregar">⟳</button>
+          <input id="urlBar" type="text" spellcheck="false" autocomplete="off" />
+          <button id="urlGoBtn" type="button">Ir</button>
+        </div>
+        <div class="zoomControls">
+          <button id="zoomOutBtn" class="toolBtn" type="button" title="Diminuir zoom">−</button>
+          <button id="zoomLabel" type="button" title="Clique para voltar ao zoom padrão">100%</button>
+          <button id="zoomInBtn" class="toolBtn" type="button" title="Aumentar zoom">+</button>
+        </div>
+        <span id="statusPill"></span>
+      </div>
+      <div id="webviewContainer"></div>
+    </main>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
