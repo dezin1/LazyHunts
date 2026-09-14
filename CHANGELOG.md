@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.11.21 — 2026-09-14
+
+### Analisador simples, e igual para conta free e premium
+
+Seis números e mais nada: **tempo, mortes, XP, XP/h, custo, lucro e lucro/h**. O lucro conta durante a caçada, conforme o loot entra — não espera a venda.
+
+Loot a preço de NPC, loot a preço de leilão e a lista item a item saíram da vista. Não foram apagados: foram pro bloco "Detalhe do loot e do gasto", fechado. A comparação com o leilão continua útil pra decidir o que **não** mandar na venda rápida, e a lista item a item é o que permite conferir um número estranho — foi assim que apareceu o "fish valendo 5.200 no leilão", que segue sem explicação.
+
+**A conta free agora tem exatamente o mesmo painel**, sem receber o tipo 41. Cada número foi validado contra o analisador do próprio jogo, na mesma janela de tempo da captura premium:
+
+| número | de onde | Swag | jogo |
+|---|---|---|---|
+| mortes | bestiary (tipo 9) | 37 | 37 |
+| XP | `experience` (tipo 77) | 67.377 | 67.377 |
+
+Contar mortes pelo tipo 18 pareceria mais óbvio e daria **42** em vez de 37 — ele também dispara quando a criatura sai da tela. Isso foi medido, não suposto, e tem teste travando a escolha.
+
+Detalhe que o XP exigiu: o `experience` é **dentro do level**, não total da conta (Kina, level 143: 371.809 de 1.001.200). Ele zera ao subir de level, então a diferença crua ficaria negativa — mesmo tratamento que a leitura de DOM já fazia.
+
+### A venda rápida agora é confirmada pelo servidor
+
+Você disse que "vender loot não tem funcionado muito bem", e o motivo estava na verificação: a única evidência de sucesso era um modal sumir da tela. Se ele demorasse, o código seguia sem saber se vendeu — e o aviso "a confirmação não apareceu" saía mesmo quando a venda tinha dado certo.
+
+O tipo 92 traz o resultado direto do servidor: `{template:"Quick sold {count} items for {amount} gold.", params:{count:13, amount:980}}`. Conferido contra o gold da mesma captura: **+980 exatos no mesmo instante**. E como o número vem em `params`, não depende do texto — se o jogo traduzir a mensagem, continua funcionando.
+
+### O detector de spawn: a correção da v0.11.20 funciona
+
+Replay da sua captura de teste com o código novo: o detector dispara em t=182s **pelo critério da volta** ("deu uma volta inteira sem matar nada"), antes do piso de 90 segundos. É a primeira vez que o critério inteligente decide em vez do relógio.
+
+Uma observação dessa mesma captura: naquela caçada, o ritmo típico nunca chegou a ser aprendido — os nascimentos vêm em lotes tão apertados que nenhum intervalo passou de 1 segundo. Ou seja, para essa caçada o piso continua sendo o único critério de tempo, e é o critério da volta que carrega a feature.
+
+
+## 0.11.20 — 2026-09-14
+
+### O detector de spawn seco tinha dois defeitos sérios, e os dois eram invisíveis
+
+Em vez de mexer no detector no escuro, montei um **replay**: as mensagens reais das capturas, na ordem e no tempo em que chegaram, passando pelo código que está rodando. O que apareceu:
+
+**1. O critério da "volta completa" nunca funcionou.** O rastro de posição ficou zerado do começo ao fim. O motivo: o id do próprio personagem vinha só do tipo 103, que chega **uma vez, no login**. Se o gancho instala depois disso — app aberto com o jogo já rodando, que é o caso comum — o id nunca chega e o critério fica morto, em silêncio. Mesma classe de falha da v0.11.10, achada do mesmo jeito: medindo em vez de supor.
+
+Corrigido: o tipo 15 também anuncia jogadores (`kind:"player"`) a cada mudança de área, inclusive o próprio personagem. Casando pelo nome, o id se reencontra sozinho toda vez que entra numa caçada.
+
+**2. O "ritmo típico" era sempre zero.** O servidor nasce criatura em lote: nas quatro capturas, entre metade e três quartos dos intervalos foram de menos de um segundo, vários de zero. A mediana dava 0ms, o ritmo aprendido virava zero, e o limiar desabava no piso configurado — ou seja, **a calibração automática que a feature promete simplesmente não existia**.
+
+Corrigido: só entram no aprendizado intervalos de 1s pra cima. Nas mesmas capturas, o ritmo real passa a ser 2,0s / 3,0s / 4,1s / 11,7s.
+
+**Consequência prática, e você tinha sentido isso:** com o ritmo sempre zero, quem decidia tudo era o piso de 90 segundos. Agora que o ritmo é real (~4s numa caçada sua), vale reconsiderar esse número — 90s é 22× o ritmo normal. Deixei a configuração como está, porque é sua; mas agora o painel mostra o ritmo aprendido, então dá pra escolher com informação em vez de chute.
+
+### O detector passou a mostrar o que está vendo
+
+Abaixo do botão de ligar, na aba Caçada: `Spawn: 3 criaturas vivas · sem nascer há 12s · ritmo normal ~4s · 72 mortes na última volta`. Se o id do personagem não tiver sido descoberto, aparece "posição do personagem indisponível" — o critério da volta desligado deixa de ser silencioso.
+
+Era a falta dessa linha que deixou os dois defeitos acima passarem despercebidos.
+
+### A chave do log agora é salva
+
+Você pediu, e meu argumento contra era fraco. Se o app reinicia no meio de uma investigação, a gravação parava em silêncio. Agora a chave sobrevive ao reinício e a gravação volta sozinha. **O buffer não sobrevive** — ele vive na memória da aba; persistir a chave limita a perda ao tempo parado, não a elimina.
+
+### A aba "Telegram" tinha sumido
+
+Quatro abas com ícone não cabem numa linha, a barra é flex sem quebra e o painel tem `overflow-x: hidden` — então a quarta aba não ficava cortada, ficava invisível. É o mesmo problema que a barra da automação já tinha resolvido na v0.11.8 e que eu não apliquei aqui: quebra em duas linhas, borda de baixo vira box-shadow.
+
+
 ## 0.11.19 — 2026-09-14
 
 ### Log do protocolo dentro do Swag

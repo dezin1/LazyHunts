@@ -690,6 +690,17 @@ body {
 .diagBtn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
 .diagBtn:disabled { opacity: .45; cursor: default; }
 
+/* v0.11.20 — leitura ao vivo do detector de spawn. Fica logo abaixo do botão
+   de ligar, porque é o contexto de quem está decidindo se liga ou não. */
+/* v0.11.21 — o detalhe do analisador, fechado por padrão. */
+.ecoDetalhe { margin-top: 10px; }
+.ecoDetalhe .ecoRow { padding-left: 2px; }
+
+.spawnLive {
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+
 .automationSection select,
 .automationSection input {
   width: 100%;
@@ -1095,6 +1106,22 @@ body {
   box-shadow: inset 0 -1px 0 var(--border-subtle);
 }
 #automationTabBar .tabBtn { flex-shrink: 0; white-space: nowrap; }
+
+/* v0.11.20 — a aba "Telegram" das configurações estava sumindo. Mesmo
+   problema que a barra da automação já tinha resolvido na v0.11.8, e que eu
+   não apliquei aqui: quatro abas com ícone não cabem numa linha só, a barra é
+   `display:flex` sem quebra, e o `#settingsPanel` tem `overflow-x:hidden` —
+   então a quarta aba não ficava cortada, ficava INVISÍVEL. Mesma receita:
+   quebra em duas linhas e a borda de baixo vira box-shadow, senão ela corta a
+   primeira linha. */
+#settingsTabBar {
+  flex-wrap: wrap;
+  row-gap: 0;
+  column-gap: 10px;
+  border-bottom: none;
+  box-shadow: inset 0 -1px 0 var(--border-subtle);
+}
+#settingsTabBar .tabBtn { flex-shrink: 0; white-space: nowrap; }
 .tabBtn:hover { color: var(--text-primary); }
 .tabBtn.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tabPanel[hidden] { display: none; }

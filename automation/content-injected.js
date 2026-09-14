@@ -100,6 +100,8 @@
     if (typeof p.vocation === "string") ficha.vocacao = p.vocation;
     if (typeof p.capacity === "number") ficha.capacidadeMaxima = p.capacity;
     ficha.em = Date.now();
+    // v0.11.21 — a mesma mensagem que traz a stamina traz a experiência.
+    xpLerMensagem(p);
   }
 
   function fichaFresca() {
@@ -159,6 +161,26 @@
     // está acima vira plano B.
     sessao: null, // último payload do tipo 41
     sessaoEm: 0,
+
+    // v0.11.21 — SESSÃO RECONSTRUÍDA, pra conta free ter o mesmo painel.
+    //
+    // Validado contra o tipo 41 da conta premium, na mesma janela de tempo:
+    //   • MORTES pelo bestiary (tipo 9): 37 × 37 do tipo 41. Exato.
+    //     ⚠️ Contar tipo 18 dá 42 — ele também dispara quando a criatura só
+    //     SAI DA TELA. Foi medido; não usar.
+    //   • XP pelo `experience` do tipo 77: 67.377 × 67.377. Exato.
+    //   • CUSTO pelos débitos de gold, que já existia.
+    inicio: 0,
+    kills: 0,
+    bestiario: new Map(), // espécie -> contagem na última mensagem vista
+    xp: 0,
+    ultimoXp: null, // {atual, necessario}
+    ultimoLevel: null,
+    // v0.11.21 — venda rápida confirmada PELO SERVIDOR (tipo 92).
+    vendas: 0,
+    itensVendidos: 0,
+    goldVendido: 0,
+    ultimaVendaEm: 0,
   };
 
   // v0.11.12 — EXPEDIÇÃO DA GUILD e CATÁLOGO DE CAÇADAS, pelo protocolo.
@@ -318,9 +340,89 @@
     // próxima mensagem não chega.
     economia.sessao = null;
     economia.sessaoEm = 0;
+    // v0.11.21 — a sessão reconstruída zera junto com o resto.
+    economia.inicio = Date.now();
+    economia.kills = 0;
+    economia.bestiario.clear();
+    economia.xp = 0;
+    economia.ultimoXp = null;
+    economia.ultimoLevel = null;
+    economia.vendas = 0;
+    economia.itensVendidos = 0;
+    economia.goldVendido = 0;
+    economia.ultimaVendaEm = 0;
+  }
+
+  // v0.11.21 — mortes pelo bestiary. O tipo 9 traz o contador ACUMULADO por
+  // espécie (`{kills:{hero:30014}}`), então morte da sessão é a soma das
+  // diferenças. Espécie vista pela primeira vez ancora em vez de contar tudo
+  // que o personagem já matou na vida.
+  function bestiarioLerMensagem(p) {
+    const ks = p && p.kills;
+    if (!ks || typeof ks !== "object") return;
+    for (const especie of Object.keys(ks)) {
+      const atual = Number(ks[especie]);
+      if (!Number.isFinite(atual)) continue;
+      const antes = economia.bestiario.get(especie);
+      if (antes !== undefined && atual > antes) economia.kills += atual - antes;
+      economia.bestiario.set(especie, atual);
+    }
+  }
+
+  // v0.11.21 — XP pelo tipo 77. O `experience` é DENTRO DO LEVEL, não total da
+  // conta (Kina level 143 tem 371.809 de 1.001.200; Dezin level 390 tem
+  // 5.240.117 de 7.546.700) — então ele ZERA ao subir de level, e a diferença
+  // crua ficaria negativa. Mesmo tratamento que o `acumularXp()` já fazia com
+  // a leitura de DOM: na virada, soma o que faltava pro level antigo mais o
+  // que já entrou no novo.
+  function xpLerMensagem(p) {
+    if (!p || typeof p.experience !== "number") return;
+    const atual = { atual: p.experience, necessario: Number(p.experienceNeeded) || 0 };
+    const level = typeof p.level === "number" ? p.level : null;
+    const antes = economia.ultimoXp;
+    if (antes) {
+      if (level != null && economia.ultimoLevel != null && level > economia.ultimoLevel) {
+        economia.xp += Math.max(0, antes.necessario - antes.atual) + Math.max(0, atual.atual);
+      } else if (atual.atual >= antes.atual) {
+        economia.xp += atual.atual - antes.atual;
+      }
+      // Caiu sem subir de level = morreu ou o jogo recalculou: re-ancora sem
+      // descontar nem inventar.
+    }
+    economia.ultimoXp = atual;
+    if (level != null) economia.ultimoLevel = level;
+  }
+
+  // v0.11.21 — o resultado da VENDA RÁPIDA, dito pelo servidor.
+  //
+  // `{text:"Quick sold 13 items for 980 gold.", template:"Quick sold {count}
+  //   items for {amount} gold.", params:{count:13, amount:980}}`
+  //
+  // Confirmado contra o gold: +980 exatos no mesmo instante. E como vem em
+  // `params`, não depende do texto — se o jogo traduzir a mensagem, continua
+  // funcionando; casar string quebraria.
+  function vendaLerMensagem(p) {
+    if (!p || !p.params) return;
+    const t = String(p.template || "");
+    if (!/quick sold/i.test(t) && !/vend/i.test(t)) return;
+    const itens = Number(p.params.count);
+    const gold = Number(p.params.amount);
+    if (!Number.isFinite(gold)) return;
+    economia.vendas++;
+    economia.itensVendidos += Number.isFinite(itens) ? itens : 0;
+    economia.goldVendido += gold;
+    economia.ultimaVendaEm = Date.now();
   }
 
   function economiaLerMensagem(tipo, p) {
+    if (tipo === "9") {
+      bestiarioLerMensagem(p);
+      return;
+    }
+    if (tipo === "92") {
+      vendaLerMensagem(p);
+      return;
+    }
     if (tipo === "41") {
       // O analisador do jogo, ao vivo. Confirmado na captura de 14/09/2026:
       // `kills` foi de 1947 a 1984 e `waste` de 35.393 a 35.998 dentro da
@@ -381,7 +483,16 @@
       const dt = agora - spawnWatch.ultimoSpawnEm;
       // Intervalos absurdos (entrou na caçada agora, ficou parado no menu) não
       // ensinam nada sobre o ritmo — descarta.
-      if (dt > 0 && dt < 5 * 60000) {
+      //
+      // v0.11.20 — E INTERVALOS CURTOS DEMAIS TAMBÉM NÃO. O servidor nasce
+      // criatura em LOTE: nas quatro capturas do André, entre metade e três
+      // quartos dos intervalos foram de menos de 1 segundo, e vários de ZERO.
+      // A mediana saía 0ms, o "ritmo típico" virava zero e o limiar desabava
+      // no piso — ou seja, a calibração automática que a feature promete
+      // simplesmente não existia. Medindo só os intervalos de 1s pra cima, as
+      // mesmas capturas dão 2,0s / 3,0s / 4,1s / 11,7s, que é ritmo de caçada
+      // de verdade.
+      if (dt >= 1000 && dt < 5 * 60000) {
         spawnWatch.intervalos.push(dt);
         if (spawnWatch.intervalos.length > 80) spawnWatch.intervalos.shift();
       }
@@ -437,7 +548,9 @@
   // v0.11.16 — entraram 54 (onde o personagem está) e 71 (convite de party).
   // v0.11.17 — entrou 51 (caçada em grupo: convite, aceite, chegada, líder).
   // v0.11.18 — entrou 77 (ficha do personagem: stamina, level, vocação).
-  const TIPOS_ESCUTADOS = new Set(["15", "18", "21", "33", "41", "42", "51", "54", "55", "57", "60", "71", "77", "103"]);
+  // v0.11.21 — entraram 9 (bestiary, pra contar mortes) e 92 (aviso do
+  // sistema, que confirma a venda rápida e o desgaste de equipamento).
+  const TIPOS_ESCUTADOS = new Set(["9", "15", "18", "21", "33", "41", "42", "51", "54", "55", "57", "60", "71", "77", "92", "103"]);
 
   function spawnLerMensagem(texto) {
     // Formato: [tipo, payload]. Filtra ANTES do JSON.parse — isto roda muito
@@ -451,7 +564,28 @@
     if (!p) return;
     if (tipo === "15") {
       const c = p.creature;
-      if (c && c.kind === "monster") spawnRegistrarNascimento(c.name, c.id);
+      if (!c) return;
+      if (c.kind === "monster") {
+        spawnRegistrarNascimento(c.name, c.id);
+        return;
+      }
+      // v0.11.20 — DESCOBRIR O MEU PRÓPRIO ID POR AQUI TAMBÉM.
+      //
+      // O replay da captura do André mostrou o rastro de posição ZERADO do
+      // começo ao fim: o `meuId` vinha só do tipo 103, que chega UMA VEZ, no
+      // login. Se o gancho instala depois disso — app aberto com o jogo já
+      // rodando, que é o caso comum —, o id nunca chega e o critério da
+      // "volta completa" fica morto em silêncio. Exatamente a mesma classe de
+      // falha da v0.11.10, achada do mesmo jeito: medindo em vez de supor.
+      //
+      // O tipo 15 também anuncia JOGADORES (`kind:"player"`), e faz isso a
+      // cada mudança de área — inclusive eu mesmo. Casando pelo nome do
+      // personagem ativo, o id se reencontra sozinho toda vez que entra numa
+      // caçada, sem depender de ter visto o login.
+      if (c.kind === "player" && c.id != null && c.name) {
+        const meuNome = getActiveCharacterName();
+        if (meuNome && c.name === meuNome) spawnWatch.meuId = c.id;
+      }
       return;
     }
     if (tipo === "18") {
@@ -683,10 +817,12 @@
       diagnostico.brutos.length = 0;
       diagnostico.bytes = 0;
       if (raiz) raiz.setAttribute(PROTO_MARCA_DIAG, "1");
+      saveState({ diagEnabled: true });
       log("Diagnóstico do protocolo LIGADO — gravando tudo que o servidor manda nesta conta.");
     } else {
       diagnostico.ativo = false;
       if (raiz) raiz.removeAttribute(PROTO_MARCA_DIAG);
+      saveState({ diagEnabled: false });
       log("Diagnóstico do protocolo desligado.");
     }
     sendState();
@@ -969,6 +1105,16 @@
     // abriu espaço pra essa exceção estreita: só clica "Jogar" numa sessão
     // JÁ AUTENTICADA na tela de seleção de personagem, nunca em
     // email/senha/"Trocar de conta"/"Sair da conta").
+    // v0.11.20 — o log do protocolo agora SOBREVIVE a um reinício. Eu tinha
+    // deixado de propósito sem salvar, argumentando que gravar ~20 msg/s não
+    // devia continuar por esquecimento. O André apontou o furo do outro lado,
+    // que é pior: se o app reinicia no meio de uma investigação (server save,
+    // atualização, queda), a gravação para em silêncio e ele só descobre
+    // depois. Com a chave salva, ela volta sozinha.
+    //
+    // O que NÃO sobrevive é o buffer: ele vive na memória da aba. Persistir a
+    // chave limita a perda ao tempo parado, não a elimina.
+    diagEnabled: false,
     autoResumeSessionEnabled: false,
     autoResumeSessionCharacter: "",
     // v0.9.3 — André: "ao abrir o app, pode logar as contas autenticadas
@@ -1272,6 +1418,17 @@
         escutaAtiva: spawnWatch.ativo && spawnWatch.mensagens > 0,
         // Quem lê o painel precisa saber de onde veio o número.
         fonte: "protocolo",
+        resumo: {
+          duracaoMs,
+          kills: Number(s.kills) || 0,
+          xp: Number(s.experience) || 0,
+          custo: waste,
+          lucro: lootValue - waste,
+          xpHora: horas > 0 ? Math.round((Number(s.experience) || 0) / horas) : null,
+          lucroHora: horas > 0 ? Math.round((lootValue - waste) / horas) : null,
+          vendas: economia.vendas,
+          goldVendido: economia.goldVendido,
+        },
         sessao: {
           duracaoMs,
           kills: Number(s.kills) || 0,
@@ -1350,6 +1507,25 @@
       escutaAtiva: spawnWatch.ativo && spawnWatch.mensagens > 0,
       fonte: "gold",
       sessao: null,
+      // v0.11.21 — a conta free passa a ter o MESMO resumo. Tudo aqui vem de
+      // mensagem que ela comprovadamente recebe: mortes do tipo 9, XP do 77,
+      // custo dos débitos de gold, loot do 60 com a tabela do 57.
+      resumo: (() => {
+        const duracaoMs = economia.inicio ? Date.now() - economia.inicio : 0;
+        const horas = duracaoMs > 0 ? duracaoMs / 3600000 : 0;
+        const lucro = valorNpc - economia.custoTotal;
+        return {
+          duracaoMs,
+          kills: economia.kills,
+          xp: economia.xp,
+          custo: economia.custoTotal,
+          lucro,
+          xpHora: horas > 0 ? Math.round(economia.xp / horas) : null,
+          lucroHora: horas > 0 ? Math.round(lucro / horas) : null,
+          vendas: economia.vendas,
+          goldVendido: economia.goldVendido,
+        };
+      })(),
       itensSemPreco,
       itens: itens.slice(0, 25),
       valorNpc,
@@ -1523,6 +1699,18 @@
       servidorDePe: servidorDePe(),
       mortesNaVoltaAnterior: spawnWatch.mortesNaVoltaAnterior,
       // v0.11.16 — onde o personagem está, segundo o servidor.
+      // v0.11.20 — estado vivo do detector de spawn seco, pro painel.
+      spawnVivo: spawnWatch.ultimoSpawnEm
+        ? {
+            vivos: spawnWatch.vivos.size,
+            paradoMs: Date.now() - spawnWatch.ultimoSpawnEm,
+            tipicoMs: intervaloTipicoDeSpawn(),
+            amostras: spawnWatch.intervalos.length,
+            tilesNaVolta: spawnWatch.rastro.length,
+            mortesNaVoltaAnterior: spawnWatch.mortesNaVoltaAnterior,
+            seguindoMeuId: spawnWatch.meuId != null,
+          }
+        : null,
       diagAtivo: diagnostico.ativo,
       diagMensagens: diagnostico.total,
       diagTipos: diagnostico.tipos.size,
@@ -2320,8 +2508,25 @@
     }
 
     const saleText = confirmBtn.textContent.trim();
+    // v0.11.21 — quem confirma a venda agora é o SERVIDOR, não o DOM.
+    //
+    // O André reportou que "vender loot não tem funcionado muito bem", e o
+    // motivo estava aqui: a única evidência de sucesso era um modal sumir da
+    // tela. Se ele demorasse, o código seguia sem saber se vendeu, e o aviso
+    // "a confirmação não apareceu" saía mesmo quando a venda tinha dado certo.
+    //
+    // O tipo 92 traz `{template:"Quick sold {count} items for {amount} gold.",
+    // params:{count:13, amount:980}}` — conferido contra o gold da mesma
+    // captura: +980 exatos no mesmo instante. E como o número vem em `params`,
+    // não depende do texto: se o jogo traduzir a mensagem, continua valendo.
+    const marca = economia.ultimaVendaEm;
     await humanClick(confirmBtn);
     await waitFor(() => !queryVisible(document, SEL.quickSellConfirmBtn), 5000);
+
+    const confirmadaPeloServidor = await waitFor(() => economia.ultimaVendaEm > marca, 6000, 200);
+    if (confirmadaPeloServidor) {
+      log(`Venda confirmada pelo servidor: ${economia.itensVendidos} itens no total desta sessão, ${economia.goldVendido} gp.`);
+    }
     return saleText;
   }
 
@@ -4812,6 +5017,9 @@
     startTrainingWatcher();
     // v0.11.10 — config global do detector de spawn seco.
     startSpawnConfigWatcher();
+    // v0.11.20 — retoma a gravação do protocolo se ela estava ligada antes do
+    // reinício. Sem isto, a chave salva não serviria pra nada.
+    if (loadState().diagEnabled) diagLigar(true);
     // v0.11.9 — religar sozinha depois de server save/queda.
     startRestartWatcher();
     // v0.9.23 — analyzer próprio + minimizar o analisador do jogo.

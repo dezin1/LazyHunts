@@ -177,6 +177,12 @@
               Ligar automação
             </button>
 
+            <!-- v0.11.20 — o detector de spawn seco decidia no escuro: não dava
+                 pra saber se ele estava vendo criatura, qual ritmo tinha
+                 aprendido, nem quanto faltava pro limiar. Sem isso, "não está
+                 legal" não tem como virar diagnóstico. -->
+            <p class="fieldHint spawnLive" id="spawnLive" hidden></p>
+
             <section class="automationSection automationGroup">
               <h4 class="automationGroupTitle">Modo de caçada</h4>
               <div class="segment">

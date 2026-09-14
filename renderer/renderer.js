@@ -1515,6 +1515,49 @@ function tile(rotulo, valor, sub) {
 // v0.11.11 — bloco de lucro real. Vem do protocolo (tipos 55/57/60), não do
 // analisador premium do jogo: loot itemizado, custo dos suprimentos (que neste
 // jogo é cobrado no uso, em gold) e o saldo pelos dois modos de valoração.
+// v0.11.21 — o que saiu da vista do analisador, guardado num bloco fechado.
+// Não é lixo: a comparação com o leilão diz o que NÃO vale mandar na venda
+// rápida, e a lista item a item é o que permite conferir um número estranho
+// (foi assim que apareceu o "fish valendo 5.200 no leilão", que ainda não
+// está explicado). Fechado por padrão porque o André pediu simples.
+function detalheDoLoot(ec) {
+  const partes = [];
+  partes.push(`<div class="ecoRow"><span>Loot (preço de NPC)</span><b>${fmtNum(ec.valorNpc)}</b></div>`);
+  partes.push(`<div class="ecoRow"><span>Loot (preço de leilão)</span><b>${fmtNum(ec.valorLeilao)}</b></div>`);
+  const ganho = ec.valorLeilao - ec.valorNpc;
+  if (ganho > 0) {
+    partes.push(`<p class="fieldHint">Leiloando em vez de vender rápido, esta sessão renderia <b>${fmtNum(ganho)}</b> a mais.</p>`);
+  }
+  if (ec.itensSemPreco > 0) {
+    partes.push(
+      `<p class="fieldHint">${ec.itensSemPreco} ${ec.itensSemPreco === 1 ? "item ficou" : "itens ficaram"} de fora da soma por não ter preço na tabela do jogo.</p>`
+    );
+  }
+  if (ec.custos && ec.custos.length) {
+    partes.push('<div class="ecoSub">Gasto</div>');
+    for (const c of ec.custos) {
+      partes.push(
+        `<div class="ecoRow"><span>${escapeHtml(c.nome || `${fmtNum(c.valorUnitario)} gp por uso`)} ×${c.vezes}</span><b>${fmtNum(c.total)}</b></div>`
+      );
+    }
+  }
+  if (ec.itens && ec.itens.length) {
+    partes.push('<div class="ecoSub">Loot</div>');
+    for (const i of ec.itens.slice(0, 8)) {
+      const v = typeof i.npc === "number" ? fmtNum(i.npc * i.qtd) : "—";
+      const l =
+        typeof i.leilao === "number" && typeof i.npc === "number" && i.leilao > i.npc
+          ? ` <em class="ecoUp">leilão ${fmtNum(i.leilao * i.qtd)}</em>`
+          : "";
+      partes.push(`<div class="ecoRow"><span>${escapeHtml(i.nome)} ×${fmtNum(i.qtd)}</span><b>${v}${l}</b></div>`);
+    }
+  }
+  if (ec.fonte === "gold") {
+    partes.push('<p class="fieldHint">Números reconstruídos pelo Swag — o analisador do jogo é premium e não chega nesta conta.</p>');
+  }
+  return `<details class="hintMore ecoDetalhe"><summary>Detalhe do loot e do gasto</summary>${partes.join("")}</details>`;
+}
+
 function renderEconomia(st) {
   const el = document.getElementById("analyzerEconomia");
   if (!el) return;
@@ -1529,6 +1572,32 @@ function renderEconomia(st) {
       '<p class="fieldHint">Esperando as tabelas de preço do jogo (elas chegam no login). Assim que chegarem, o lucro aparece aqui.</p>';
     return;
   }
+  // v0.11.21 — André: "eu quero um analisador que entregue valor de verdade,
+  // eu preciso que seja simples. qual foi o custo, e entregue o lucro/hora,
+  // quanto de xp/h". Então o painel mostra SEIS números e mais nada: tempo,
+  // mortes, XP, XP/h, custo, lucro e lucro/h.
+  //
+  // O que saiu da vista (loot a preço de NPC, loot a preço de leilão, a lista
+  // item a item) não foi apagado — foi pro "Detalhe", fechado. A comparação
+  // com o leilão foi pedida por ele há dois dias e continua útil pra decidir o
+  // que NÃO mandar na venda rápida; só não precisa estar na cara o tempo todo.
+  const r = ec.resumo;
+  if (r) {
+    const min = Math.floor(r.duracaoMs / 60000);
+    const dur = min >= 60 ? `${Math.floor(min / 60)}h${String(min % 60).padStart(2, "0")}` : `${min}min`;
+    const linhasResumo = [
+      `<div class="ecoRow"><span>Tempo</span><b>${dur}</b></div>`,
+      `<div class="ecoRow"><span>Mortes</span><b>${fmtNum(r.kills)}</b></div>`,
+      `<div class="ecoRow"><span>XP</span><b>${fmtNum(r.xp)}</b></div>`,
+      r.xpHora !== null ? `<div class="ecoRow"><span>XP por hora</span><b>${fmtNum(r.xpHora)}</b></div>` : "",
+      `<div class="ecoRow"><span>Custo</span><b class="ecoNeg">−${fmtNum(r.custo)}</b></div>`,
+      `<div class="ecoRow ecoTotal"><span>Lucro</span><b>${fmtNum(r.lucro)}</b></div>`,
+      r.lucroHora !== null ? `<div class="ecoRow ecoTotal"><span>Lucro por hora</span><b>${fmtNum(r.lucroHora)}</b></div>` : "",
+    ];
+    el.innerHTML = linhasResumo.join("") + detalheDoLoot(ec);
+    return;
+  }
+
   const ganho = ec.valorLeilao - ec.valorNpc;
   const linhas = [];
 
@@ -1690,10 +1759,40 @@ function absorbCatalogFromState(tabId, state) {
   }
 }
 
+// v0.11.20 — o que o detector de spawn seco está enxergando AGORA.
+//
+// Sem isso, "o detector não está legal" não vira diagnóstico: não dá pra saber
+// se ele está vendo criatura, qual ritmo aprendeu ou quanto falta pro limiar.
+// Dois defeitos sérios (o rastro de posição nunca ligava, e o ritmo aprendido
+// era sempre zero) ficaram meses invisíveis por não existir esta linha.
+function renderSpawnLive(state) {
+  const el = document.getElementById("spawnLive");
+  if (!el) return;
+  const s = state && state.spawnVivo;
+  if (!s) {
+    el.hidden = true;
+    return;
+  }
+  const partes = [];
+  partes.push(`${s.vivos} ${s.vivos === 1 ? "criatura viva" : "criaturas vivas"}`);
+  partes.push(`sem nascer há ${Math.round(s.paradoMs / 1000)}s`);
+  if (s.tipicoMs) partes.push(`ritmo normal ~${Math.round(s.tipicoMs / 1000)}s`);
+  else partes.push(`aprendendo o ritmo (${s.amostras}/8)`);
+  if (s.mortesNaVoltaAnterior !== null && s.mortesNaVoltaAnterior !== undefined) {
+    partes.push(`${s.mortesNaVoltaAnterior} mortes na última volta`);
+  }
+  // Se o id do personagem não foi descoberto, o critério da volta está
+  // desligado — e isso precisa aparecer, não ficar em silêncio.
+  if (!s.seguindoMeuId) partes.push("posição do personagem indisponível");
+  el.textContent = `Spawn: ${partes.join(" · ")}.`;
+  el.hidden = false;
+}
+
 function syncAutomationPanel() {
   const tabId = selectedAutomationTabId;
   if (!tabId) return;
   const state = automationState.get(tabId) || {};
+  renderSpawnLive(state);
 
   automationDotEl.classList.toggle("on", !!state.running || !!state.hunting);
   automationDotEl.classList.toggle("err", state.status === "Erro");
