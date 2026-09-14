@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.11.19 — 2026-09-14
+
+### Log do protocolo dentro do Swag
+
+Até agora, investigar o jogo exigia abrir o Chrome com o userscript e uma conta sobrando, porque o Huntera só aceita uma sessão por conta. Não fazia sentido: o gancho já está instalado em toda aba do Swag — faltava só deixar passar tudo em vez de só os tipos que a automação usa.
+
+Em **Configurações → Caçada**, no fim: um interruptor "Gravar o que o servidor manda" e um botão "Baixar o log". Grava a **conta selecionada no painel**, e o arquivo sai no mesmo formato JSON do userscript de propósito — as ferramentas de análise que já existem continuam valendo sem adaptação. O nome do arquivo carrega o personagem e o carimbo de tempo, porque esses logs sempre acabam sendo comparados entre si.
+
+**Desligado por padrão, e não é cerimônia:** são ~20 mensagens por segundo por conta. O interruptor também não é salvo em disco — gravar não é estado que deva sobreviver a um reinício por esquecimento. Liga, investiga, baixa, desliga.
+
+Uma coisa que veio de graça do jeito que foi feito: a primeira amostra de cada tipo vai inteira. Os catálogos do login são enormes (o tipo 42 tem 340 KB) e chegam nos primeiros segundos — cortar a amostra e ainda deixar o buffer circular descartar o original foi exatamente o que estragou a primeira captura e escondeu a tabela de preços de leilão.
+
+### Confirmado: conta free não recebe o tipo 41
+
+Não é mais hipótese. Rodando a v0.11.18 numa conta free, com um ciclo completo de caçada e venda, o painel seguiu na reconstrução por gold. Como o `economiaZerar()` só roda ao iniciar sessão nova do bot — nunca ao sair da caçada — se o tipo 41 tivesse chegado uma vez o painel teria trocado de fonte. Não trocou. **A trava do analisador premium é no servidor, não só na interface.**
+
+Consequência: o cálculo por diferença de gold deixa de ser plano B provisório. É o analisador oficial da conta free e o único lugar onde essas contas veem custo e saldo — está marcado assim no código, pra ninguém tratar como código de segunda.
+
+
+## 0.11.18 — 2026-09-14
+
+### Stamina pelo protocolo
+
+`getStaminaRemainingMinutes()` passa a ler o `staminaMs` do tipo 77. Isso corrige o furo mais perigoso dessa leitura: o relógio de stamina é DOM, e antes de o HUD montar ele devolvia `null` — que o `hasEnoughStaminaToHunt()` interpreta como "tem stamina de sobra". Uma falha de leitura virava um "sim".
+
+Os minutos calculados batem exatamente com o `staminaMinutes` que o tipo 72 informa do mesmo personagem — duas mensagens independentes do servidor concordando, o que é a melhor confirmação disponível sem testar no jogo.
+
+O level também sai do tipo 77. **A vocação não**: o protocolo manda `"druid"` e a interface mostra a abreviação promovida (`ED`). Traduzir uma na outra depende da promoção do personagem, e errar aí deixa o rótulo da conta errado na barra lateral — continua saindo do DOM.
+
+Toda leitura tem validade de 60s: o tipo 77 só chega com o jogo rodando, então se o socket cair o último valor envelhece e a leitura volta pro DOM, em vez de afirmar uma stamina congelada.
+
+### A capacidade NÃO migrou, e é de propósito
+
+O tipo 77 tem um campo `capacity`, e era tentador usar. Ele ficou **constante em 588721 nas 181 amostras** de uma caçada com loot entrando o tempo todo — ou seja, é a capacidade **máxima**, não a restante.
+
+Trocar o `getCapacityRemaining()` por ele faria o bot achar que nunca enche, nunca sair pra vender e caçar até travar. O teste registra isso: verifica que o valor é constante no log e que a função continua lendo o DOM.
+
+### Correção de uma afirmação minha
+
+Eu tinha escrito no código que o tipo 77 tinha duas variantes, uma completa e uma curta. Não tem: nas três capturas, as 483 mensagens vieram todas com as mesmas 39 chaves. A conclusão errada veio de comparar uma contagem do buffer circular com o total da sessão — denominadores diferentes. O comentário foi corrigido e o teste agora segura a hipótese: se um dia aparecer uma mensagem parcial, ele acusa.
+
+### Dois defeitos que o print do André revelou
+
+**Gold coin valia zero.** No painel apareceu `gold coin ×250` com valor "—", somando nada. Gold não está na tabela de venda do NPC (não se vende moeda pro NPC), então ele caía fora da conta inteira no caminho de reconstrução por gold. Corrigido: moeda vale o próprio número — e isso não é chute, o tipo 41 da captura traz `{itemId:3031, count:38361, value:38361}`, valor idêntico à quantidade.
+
+**Item sem preço sumia em silêncio.** Era o pior dos mundos: o total ficava menor e nada avisava. Agora o painel diz quantos itens ficaram de fora da soma.
+
+**E o painel passou a dizer de onde vem o número.** Quando o analisador do jogo não chega, aparece "Calculado por diferença de gold". A pergunta "será que não vem o tipo 41 na conta free?" deixa de depender de eu olhar o código.
+
+### Testes
+
+12 checagens novas. Total de 95 no projeto, todas rodando em cima dos arquivos entregues e das suas capturas reais.
+
+
 ## 0.11.17 — 2026-09-14
 
 ### Caçada em grupo: o servidor manda a máquina de estados inteira

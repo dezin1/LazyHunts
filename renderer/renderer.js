@@ -260,6 +260,30 @@ const automationState = new Map(); // tabId -> { running, status, huntName, pull
 const guestReady = new Set();
 let selectedAutomationTabId = null;
 
+// v0.11.19 — salva o log do protocolo como .json.
+//
+// O nome carrega o personagem e o carimbo de tempo porque esses arquivos
+// costumam ser comparados entre si depois ("o que mudou entre a conta free e
+// a premium?") — e dois arquivos chamados "log.json" não se comparam.
+function baixarDiagnostico(tab, pacote) {
+  if (!pacote) return;
+  try {
+    const blob = new Blob([JSON.stringify(pacote, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const quem = (pacote.personagem || tab.label || "conta").replace(/[^\w.-]+/g, "-");
+    const carimbo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.download = `swag-proto-${quem}-${carimbo}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (err) {
+    // Sem download o diagnóstico não se perde: ele continua gravando na conta.
+  }
+}
+
 function sendAutomationCommand(tabId, msg) {
   if (!guestReady.has(tabId)) return;
   const wv = getWebview(tabId);
@@ -367,6 +391,12 @@ function ensureWebview(tab) {
       }
       return;
     }
+    // v0.11.19 — pacote do diagnóstico do protocolo. Chega só quando pedido
+    // (pode ter megabytes) e vira um .json baixado na hora.
+    if (e.channel === "hm:diag") {
+      baixarDiagnostico(tab, (e.args && e.args[0]) || null);
+      return;
+    }
     if (e.channel !== "hm:state") return;
     const prev = automationState.get(tab.id) || {};
     automationState.set(tab.id, { ...prev, ...e.args[0] });
@@ -379,6 +409,7 @@ function ensureWebview(tab) {
     absorbCatalogFromState(tab.id, e.args[0] || {});
     absorbStatsFromState(tab.id, e.args[0] || {});
     updateAutoIndicator(tab.id);
+    renderDiagStatus(); // v0.11.19 — contador do log do protocolo
     if (tab.id === selectedAutomationTabId) syncAutomationPanel();
     checkGroupHuntTeamReady(); // v0.9.8
     // v0.9.2 — André: "mostrar o nome do personagem logado e não Conta 1,
@@ -946,6 +977,57 @@ async function salvarSpawnConfig(parcial) {
 }
 
 spawnEnabledToggle.addEventListener("change", () => salvarSpawnConfig({ enabled: spawnEnabledToggle.checked }));
+
+// v0.11.19 — log do protocolo. Diferente do resto das configurações, isto NÃO
+// é salvo em disco de propósito: gravar 20 mensagens por segundo não é estado
+// que deva sobreviver a um reinício do app por esquecimento. Liga, investiga,
+// baixa, desliga.
+const diagEnabledToggle = document.getElementById("diagEnabledToggle");
+const diagDownloadBtn = document.getElementById("diagDownloadBtn");
+const diagStatus = document.getElementById("diagStatus");
+
+function contaDoDiagnostico() {
+  // Sempre a conta selecionada no painel — foi a escolha do André, e é o que
+  // mantém isso leve.
+  return selectedAutomationTabId || activeTabId;
+}
+
+function renderDiagStatus() {
+  if (!diagStatus) return;
+  const tabId = contaDoDiagnostico();
+  const st = (tabId && automationState.get(tabId)) || {};
+  const ativo = !!st.diagAtivo;
+  if (diagEnabledToggle) diagEnabledToggle.checked = ativo;
+  if (diagDownloadBtn) diagDownloadBtn.disabled = !st.diagMensagens;
+  if (!tabId) {
+    diagStatus.textContent = "Selecione uma conta no painel de automação primeiro.";
+    return;
+  }
+  const nome = st.characterName || "a conta selecionada";
+  diagStatus.textContent = ativo
+    ? `Gravando ${nome}: ${fmtNum(st.diagMensagens || 0)} mensagens, ${st.diagTipos || 0} tipos.`
+    : st.diagMensagens
+      ? `Parado. ${fmtNum(st.diagMensagens)} mensagens gravadas de ${nome} — ainda dá pra baixar.`
+      : "Desligado.";
+}
+
+if (diagEnabledToggle) {
+  diagEnabledToggle.addEventListener("change", () => {
+    const tabId = contaDoDiagnostico();
+    if (!tabId) {
+      diagEnabledToggle.checked = false;
+      renderDiagStatus();
+      return;
+    }
+    sendAutomationCommand(tabId, { type: diagEnabledToggle.checked ? "diagStart" : "diagStop" });
+  });
+}
+if (diagDownloadBtn) {
+  diagDownloadBtn.addEventListener("click", () => {
+    const tabId = contaDoDiagnostico();
+    if (tabId) sendAutomationCommand(tabId, { type: "diagDump" });
+  });
+}
 spawnMinSecondsInput.addEventListener("change", () => {
   const n = Number(spawnMinSecondsInput.value);
   if (!Number.isNaN(n) && n >= 30) salvarSpawnConfig({ minSeconds: n });
@@ -1468,6 +1550,13 @@ function renderEconomia(st) {
       );
     }
     linhas.push('<div class="ecoSub">Resultado</div>');
+  } else {
+    // v0.11.18 — o André perguntou "será que não vem o tipo 41 na conta free?"
+    // e a resposta não estava na tela. Agora está: quem olha o painel sabe se
+    // o número veio do analisador do jogo ou da reconstrução por gold.
+    linhas.push(
+      '<p class="fieldHint">Calculado por diferença de gold — o analisador do jogo (que traz loot e gasto prontos) não chegou nesta conta.</p>'
+    );
   }
 
   linhas.push(
@@ -1480,6 +1569,11 @@ function renderEconomia(st) {
   if (ganho > 0) {
     linhas.push(
       `<p class="fieldHint">Leiloando em vez de vender rápido você ganharia <b>${fmtNum(ganho)}</b> a mais nesta sessão.</p>`
+    );
+  }
+  if (ec.itensSemPreco > 0) {
+    linhas.push(
+      `<p class="fieldHint">${ec.itensSemPreco} ${ec.itensSemPreco === 1 ? "item ficou" : "itens ficaram"} de fora da soma por não ter preço na tabela do jogo.</p>`
     );
   }
   if (ec.custos && ec.custos.length) {

@@ -473,6 +473,25 @@
                 <p class="fieldHint">A automação mede sozinha o intervalo típico entre criaturas naquela caçada e com aquele personagem. O gatilho é o maior entre os dois: o piso em segundos e o ritmo normal multiplicado.</p>
               </div>
             </section>
+
+            <!-- v0.11.19 — log do protocolo. Antes disso, investigar o jogo
+                 exigia abrir o Chrome com um userscript e uma conta sobrando,
+                 porque o jogo só aceita uma sessão por conta. O gancho já está
+                 instalado aqui; isto só deixa passar tudo em vez de só o que a
+                 automação usa. -->
+            <section class="automationSection automationGroup">
+              <h4 class="automationGroupTitle">Log do protocolo</h4>
+              <label class="switchRow groupSwitchRow">
+                <span>Gravar o que o servidor manda</span>
+                <input type="checkbox" id="diagEnabledToggle" />
+              </label>
+              <details class="hintMore">
+                <summary>Para investigar o jogo, não para o dia a dia.</summary>
+                <p>Grava todas as mensagens que o servidor manda para a <b>conta selecionada</b> — inclusive as que a automação não usa, que são justamente as que faltam mapear. São cerca de 20 mensagens por segundo, então deixe ligado só enquanto estiver investigando.</p>
+              </details>
+              <p class="fieldHint" id="diagStatus">Desligado.</p>
+              <button type="button" class="diagBtn" id="diagDownloadBtn" disabled>Baixar o log</button>
+            </section>
           </div>
 
           <div class="tabPanel" id="settingsTabPanelAparencia" data-tab="aparencia">

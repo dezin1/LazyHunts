@@ -673,6 +673,23 @@ body {
 }
 .autoRefreshBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
+/* v0.11.19 — botão de baixar o log do protocolo. Largura cheia porque mora
+   sozinho no fim da seção, e desabilitado por padrão: sem gravação não há o
+   que baixar, e um botão que não faz nada ensina errado. */
+.diagBtn {
+  width: 100%;
+  margin-top: 8px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.diagBtn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.diagBtn:disabled { opacity: .45; cursor: default; }
+
 .automationSection select,
 .automationSection input {
   width: 100%;

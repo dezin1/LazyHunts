@@ -68,6 +68,44 @@
     mortesNaVoltaAnterior: null, // null = ainda não fechou nenhuma volta
   };
 
+  // v0.11.18 — FICHA DO PERSONAGEM pelo tipo 77.
+  //
+  // Cada campo é atualizado só quando vem presente. Isso é precaução, não
+  // remendo: nas três capturas, as 483 mensagens do tipo 77 vieram TODAS
+  // completas, com as mesmas 39 chaves. (Eu cheguei a achar que existia uma
+  // variante curta; era erro meu de leitura, comparando uma contagem do buffer
+  // circular com o total da sessão. O teste derrubou a hipótese.) Se um dia
+  // aparecer uma variante parcial, esta forma não apaga o que já se sabia.
+  //
+  // ⚠️⚠️ `capacity` NÃO É A CAPACIDADE RESTANTE. Ficou constante em 588721
+  // nas 181 amostras de uma caçada com loot entrando o tempo todo — ou seja,
+  // é o MÁXIMO. Trocar o `getCapacityRemaining()` por ele faria o bot achar
+  // que nunca enche e nunca mais ir vender. Capacidade continua no DOM.
+  const ficha = {
+    staminaMs: null,
+    staminaDrenando: null,
+    level: null,
+    vocacao: null,
+    capacidadeMaxima: null, // só informativo — ver aviso acima
+    em: 0,
+  };
+
+  const FICHA_VALIDADE_MS = 60000; // sem tipo 77 há mais que isso, volta pro DOM
+
+  function fichaLerMensagem(p) {
+    if (!p || typeof p !== "object") return;
+    if (typeof p.staminaMs === "number") ficha.staminaMs = p.staminaMs;
+    if (typeof p.staminaDraining === "boolean") ficha.staminaDrenando = p.staminaDraining;
+    if (typeof p.level === "number") ficha.level = p.level;
+    if (typeof p.vocation === "string") ficha.vocacao = p.vocation;
+    if (typeof p.capacity === "number") ficha.capacidadeMaxima = p.capacity;
+    ficha.em = Date.now();
+  }
+
+  function fichaFresca() {
+    return ficha.em > 0 && Date.now() - ficha.em < FICHA_VALIDADE_MS;
+  }
+
   // v0.11.16 — último convite de party visto no protocolo (tipo 71).
   // `{fromId, fromName, members:[{name,level,vocation}]}`. Só a DETECÇÃO vem
   // daqui; aceitar continua sendo clique no DOM.
@@ -266,6 +304,10 @@
     };
   }
 
+  // v0.11.18 — confirmado no tipo 41 da captura de 14/09: gold coin tem
+  // `value` igual ao `count`, ou seja, 1 gp por moeda.
+  const GOLD_COIN_ITEM_ID = 3031;
+
   function economiaZerar() {
     economia.loot.clear();
     economia.custoTotal = 0;
@@ -394,7 +436,8 @@
   // v0.11.15 — entrou o 41 (analisador da sessão).
   // v0.11.16 — entraram 54 (onde o personagem está) e 71 (convite de party).
   // v0.11.17 — entrou 51 (caçada em grupo: convite, aceite, chegada, líder).
-  const TIPOS_ESCUTADOS = new Set(["15", "18", "21", "33", "41", "42", "51", "54", "55", "57", "60", "71", "103"]);
+  // v0.11.18 — entrou 77 (ficha do personagem: stamina, level, vocação).
+  const TIPOS_ESCUTADOS = new Set(["15", "18", "21", "33", "41", "42", "51", "54", "55", "57", "60", "71", "77", "103"]);
 
   function spawnLerMensagem(texto) {
     // Formato: [tipo, payload]. Filtra ANTES do JSON.parse — isto roda muito
@@ -421,6 +464,10 @@
     }
     if (tipo === "54") {
       mundoLerMensagem(p);
+      return;
+    }
+    if (tipo === "77") {
+      fichaLerMensagem(p);
       return;
     }
     if (tipo === "71") {
@@ -479,9 +526,11 @@
   // cópia. Duplicar esse trecho lá seria criar duas verdades pra manter.
   const PROTO_EVENTO = "hm:proto";
   const PROTO_EVENTO_WS = "hm:proto-ws"; // ciclo de vida do socket do jogo
+  const PROTO_EVENTO_DIAG = "hm:proto-diag"; // v0.11.19 — tudo, no diagnóstico
+  const PROTO_MARCA_DIAG = "data-hm-diag"; // interruptor do diagnóstico
   const PROTO_MARCA = "data-hm-proto"; // marca no <html>: o gancho está vivo
 
-  function codigoDoGanchoNaPagina(nomeEvento, tipos, marca, eventoWs) {
+  function codigoDoGanchoNaPagina(nomeEvento, tipos, marca, eventoWs, marcaDiag, eventoDiag) {
     return `(() => {
       if (window.__hmProtoInstalado) return "ja";
       window.__hmProtoInstalado = true;
@@ -490,6 +539,23 @@
       const avisarWs = (estado) => {
         try { document.dispatchEvent(new CustomEvent(${JSON.stringify(eventoWs)}, { detail: estado })); } catch (e) {}
       };
+      // v0.11.19 — MODO DIAGNÓSTICO. Desligado, não custa nada: a variável
+      // \`diag\` é lida por mensagem, e só quando ela é true a mensagem inteira
+      // atravessa pro mundo isolado. O interruptor é um atributo no <html>,
+      // porque o DOM é o único terreno comum entre os dois mundos — e é
+      // observado por MutationObserver pra não virar uma leitura de DOM a
+      // cada mensagem (são ~20/s por conta).
+      let diag = false;
+      try {
+        const lerFlag = () => {
+          try { diag = document.documentElement.getAttribute(${JSON.stringify(marcaDiag)}) === "1"; } catch (e) {}
+        };
+        lerFlag();
+        new MutationObserver(lerFlag).observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: [${JSON.stringify(marcaDiag)}],
+        });
+      } catch (e) {}
       try {
         const WSNativo = window.WebSocket;
         function WSObservado(url, protocols) {
@@ -525,6 +591,11 @@
                   if (TIPOS.has(t)) {
                     document.dispatchEvent(new CustomEvent(${JSON.stringify(nomeEvento)}, { detail: texto }));
                   }
+                  // No diagnóstico vai TUDO, inclusive o que a automação não
+                  // usa — é justamente o desconhecido que interessa mapear.
+                  if (diag) {
+                    document.dispatchEvent(new CustomEvent(${JSON.stringify(eventoDiag)}, { detail: texto }));
+                  }
                 }
               }
             } catch (e) {}
@@ -538,6 +609,110 @@
         return "ok";
       } catch (e) { return "erro:" + (e && e.message); }
     })();`;
+  }
+
+  // ================= v0.11.19 — LOG DO PROTOCOLO DENTRO DO SWAG =================
+  //
+  // Até aqui, investigar o protocolo exigia o André abrir o Chrome com o
+  // userscript e uma conta sobrando (o jogo só aceita uma sessão por conta).
+  // O gancho já está instalado em toda aba do Swag — falta só deixar passar
+  // tudo em vez de só os tipos que a automação usa.
+  //
+  // DESLIGADO POR PADRÃO, e isso não é cerimônia: são ~20 mensagens por
+  // segundo por conta. Ligado nas quatro ao mesmo tempo seria ~80/s
+  // atravessando a fronteira de mundos sem ninguém pedir.
+  //
+  // O formato de saída é O MESMO do userscript, de propósito: as ferramentas
+  // de análise que já existem continuam valendo sem adaptação.
+  const APP_VERSION_DIAG = "0.11.19";
+  const DIAG_MAX_BRUTOS = 4000;
+  const DIAG_MAX_BYTES = 12 * 1024 * 1024;
+  const DIAG_AMOSTRA_INTEIRA = 2 * 1024 * 1024;
+  const DIAG_AMOSTRA_CURTA = 2000;
+
+  const diagnostico = {
+    ativo: false,
+    inicio: 0,
+    total: 0,
+    tipos: new Map(), // tipo -> {qtd, primeiro, ultimo, amostras[], bytes}
+    brutos: [],
+    bytes: 0,
+  };
+
+  function diagRegistrar(texto) {
+    if (!diagnostico.ativo) return;
+    const virg = texto.indexOf(",");
+    if (virg < 2 || virg > 6) return;
+    const tipo = Number(texto.slice(1, virg));
+    if (!Number.isFinite(tipo)) return;
+
+    const agora = Date.now();
+    diagnostico.total++;
+
+    let reg = diagnostico.tipos.get(tipo);
+    if (!reg) {
+      reg = { qtd: 0, primeiro: agora, ultimo: agora, amostras: [], bytes: 0 };
+      diagnostico.tipos.set(tipo, reg);
+    }
+    reg.qtd++;
+    reg.ultimo = agora;
+    reg.bytes += texto.length;
+    // A PRIMEIRA amostra de cada tipo vai inteira. Os catálogos do login são
+    // enormes (o tipo 42 tem 340 KB) e chegam nos primeiros segundos — cortar
+    // a amostra e ainda deixar o buffer circular descartar o original foi
+    // exatamente o que estragou a primeira captura do André.
+    if (reg.amostras.length === 0) reg.amostras.push(texto.slice(0, DIAG_AMOSTRA_INTEIRA));
+    else if (reg.amostras.length < 3) reg.amostras.push(texto.slice(0, DIAG_AMOSTRA_CURTA));
+
+    diagnostico.brutos.push({ t: agora - diagnostico.inicio, tipo, texto });
+    diagnostico.bytes += texto.length;
+    while (diagnostico.brutos.length > DIAG_MAX_BRUTOS || diagnostico.bytes > DIAG_MAX_BYTES) {
+      const fora = diagnostico.brutos.shift();
+      if (!fora) break;
+      diagnostico.bytes -= fora.texto.length;
+    }
+  }
+
+  function diagLigar(ligado) {
+    const raiz = document.documentElement;
+    if (ligado) {
+      diagnostico.ativo = true;
+      diagnostico.inicio = Date.now();
+      diagnostico.total = 0;
+      diagnostico.tipos.clear();
+      diagnostico.brutos.length = 0;
+      diagnostico.bytes = 0;
+      if (raiz) raiz.setAttribute(PROTO_MARCA_DIAG, "1");
+      log("Diagnóstico do protocolo LIGADO — gravando tudo que o servidor manda nesta conta.");
+    } else {
+      diagnostico.ativo = false;
+      if (raiz) raiz.removeAttribute(PROTO_MARCA_DIAG);
+      log("Diagnóstico do protocolo desligado.");
+    }
+    sendState();
+  }
+
+  function diagPacote() {
+    return {
+      gerado: new Date().toISOString(),
+      origem: "swag",
+      versao: APP_VERSION_DIAG,
+      personagem: getActiveCharacterName(),
+      duracaoSegundos: diagnostico.inicio ? Math.round((Date.now() - diagnostico.inicio) / 1000) : 0,
+      socketEstado: socketJogo.estado,
+      totalMensagens: diagnostico.total,
+      tipos: [...diagnostico.tipos.entries()]
+        .sort((a, b) => b[1].qtd - a[1].qtd)
+        .map(([tipo, r]) => ({
+          tipo,
+          qtd: r.qtd,
+          bytes: r.bytes,
+          primeiroEm: r.primeiro - diagnostico.inicio,
+          ultimoEm: r.ultimo - diagnostico.inicio,
+          amostras: r.amostras,
+        })),
+      brutos: diagnostico.brutos,
+    };
   }
 
   function ganchoNaPaginaInstalado() {
@@ -572,11 +747,17 @@
         } catch (e) {}
       });
 
+      document.addEventListener(PROTO_EVENTO_DIAG, (ev) => {
+        try { diagRegistrar(String(ev.detail)); } catch (e) {}
+      });
+
       const codigo = codigoDoGanchoNaPagina(
         PROTO_EVENTO,
         [...TIPOS_ESCUTADOS],
         PROTO_MARCA,
-        PROTO_EVENTO_WS
+        PROTO_EVENTO_WS,
+        PROTO_MARCA_DIAG,
+        PROTO_EVENTO_DIAG
       );
       let tentativas = 0;
       const pedir = () => {
@@ -1116,19 +1297,34 @@
       };
     }
 
-    // ---- PLANO B: reconstruir por delta de gold (v0.11.11) ----
+    // ---- CONTA FREE: reconstruir por delta de gold (v0.11.11) ----
     //
-    // Continua aqui porque ainda NÃO foi confirmado que uma conta free recebe
-    // o tipo 41 — a trava do analisador premium pode ser só de interface, mas
-    // isso é hipótese. Enquanto for hipótese, apagar este caminho seria apagar
-    // o analisador inteiro de quem joga de graça.
+    // ✅ CONFIRMADO EM 14/09/2026, não é mais hipótese: a conta free NÃO
+    // recebe o tipo 41. O André rodou numa conta free, com um ciclo completo
+    // de caçada e venda, e o painel seguiu na reconstrução por gold. A trava
+    // do analisador premium é no SERVIDOR, não só na interface.
+    //
+    // Ou seja, este caminho não é provisório — é o analisador oficial de quem
+    // joga de graça, e é o único lugar onde essas contas veem custo e saldo.
+    // Tratar como código de segunda seria abandonar metade dos usuários.
     let valorNpc = 0;
     let valorLeilao = 0;
+    let itensSemPreco = 0;
     const itens = [];
     for (const [itemId, info] of economia.loot) {
-      const npc = economia.precoNpc.get(itemId);
+      // v0.11.18 — GOLD COIN não está na tabela de venda do NPC (não se vende
+      // gold pro NPC), então ele caía fora da conta inteira: no painel do
+      // André apareceu "gold coin ×250" valendo "—", somando ZERO. Moeda vale
+      // o próprio número — e isso não é chute meu: na captura de 14/09 o tipo
+      // 41 traz `{itemId:3031, name:"gold coin", count:38361, value:38361}`,
+      // valor idêntico à quantidade.
+      const npc = itemId === GOLD_COIN_ITEM_ID ? 1 : economia.precoNpc.get(itemId);
       const leilao = economia.precoLeilao.get(itemId);
       if (typeof npc === "number") valorNpc += npc * info.qtd;
+      // Contar item sem preço como zero em SILÊNCIO é o pior dos mundos: o
+      // total fica menor e nada avisa. Agora o painel diz quantos ficaram de
+      // fora.
+      else itensSemPreco++;
       // Item sem preço de leilão não tem mercado: vale o NPC mesmo.
       valorLeilao += (typeof leilao === "number" ? leilao : typeof npc === "number" ? npc : 0) * info.qtd;
       itens.push({ itemId, nome: info.nome || economia.nomePorItemId.get(itemId) || `#${itemId}`, qtd: info.qtd, npc, leilao });
@@ -1154,6 +1350,7 @@
       escutaAtiva: spawnWatch.ativo && spawnWatch.mensagens > 0,
       fonte: "gold",
       sessao: null,
+      itensSemPreco,
       itens: itens.slice(0, 25),
       valorNpc,
       valorLeilao,
@@ -1326,6 +1523,9 @@
       servidorDePe: servidorDePe(),
       mortesNaVoltaAnterior: spawnWatch.mortesNaVoltaAnterior,
       // v0.11.16 — onde o personagem está, segundo o servidor.
+      diagAtivo: diagnostico.ativo,
+      diagMensagens: diagnostico.total,
+      diagTipos: diagnostico.tipos.size,
       instanciaAtual: mundo.instanceId,
       cenarioAtual: mundo.scenarioId,
       trocasDeInstancia: mundo.trocasDeInstancia,
@@ -1579,6 +1779,17 @@
   }
 
   function getStaminaRemainingMinutes() {
+    // v0.11.18 — o servidor manda `staminaMs` no tipo 77, e isso resolve o
+    // furo mais perigoso desta leitura: o relógio de stamina é DOM, e antes de
+    // o HUD montar ele devolvia `null` — que o `hasEnoughStaminaToHunt()` lê
+    // como "tem stamina de sobra". Ou seja, a falha de leitura virava um "sim".
+    //
+    // A validade de 60s existe porque o tipo 77 só chega com o jogo rodando:
+    // se o socket cair, o último valor envelhece e a leitura volta pro DOM em
+    // vez de ficar afirmando uma stamina congelada.
+    if (fichaFresca() && typeof ficha.staminaMs === "number") {
+      return Math.floor(ficha.staminaMs / 60000);
+    }
     const el = document.querySelector(SEL.staminaClock);
     return el ? parseStaminaClock(el.textContent) : null;
   }
@@ -3946,6 +4157,15 @@
   // do EK; agora o level do `<em>` dele também vai pro painel, pra lista de
   // contas mostrar "ED 357" em vez de repetir o domínio do jogo.
   function getActiveCharacterLevel() {
+    // v0.11.18 — o tipo 77 traz `level` como número, sem depender do `<em>`
+    // dentro do cabeçalho existir ainda.
+    //
+    // A VOCAÇÃO continua saindo do DOM de propósito: o protocolo manda
+    // "druid", e a interface do jogo mostra a abreviação promovida ("ED").
+    // Traduzir uma na outra depende da promoção do personagem — seria chute, e
+    // o preço de errar aqui é o rótulo da conta ficar errado na barra lateral.
+    if (fichaFresca() && typeof ficha.level === "number") return ficha.level;
+
     const el = queryVisible(document, SEL.characterVocation);
     if (!el) return null;
     const em = el.querySelector("em");
@@ -4497,6 +4717,17 @@
         break;
       case "stop":
         stopBot();
+        break;
+      case "diagStart":
+        diagLigar(true);
+        break;
+      case "diagStop":
+        diagLigar(false);
+        break;
+      case "diagDump":
+        // O pacote pode ter megabytes — vai por sendToHost, que é o mesmo
+        // canal do estado, mas SÓ quando pedido.
+        sendToHost("hm:diag", diagPacote());
         break;
       case "setConfig":
         applyConfig(msg.payload || {});
