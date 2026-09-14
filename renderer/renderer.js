@@ -265,9 +265,19 @@ let selectedAutomationTabId = null;
 // O nome carrega o personagem e o carimbo de tempo porque esses arquivos
 // costumam ser comparados entre si depois ("o que mudou entre a conta free e
 // a premium?") — e dois arquivos chamados "log.json" não se comparam.
+let versaoDoApp = null;
+try {
+  window.hunteraFarm.getAppVersion().then((v) => { versaoDoApp = v; }).catch(() => {});
+} catch (err) {}
+
 function baixarDiagnostico(tab, pacote) {
   if (!pacote) return;
   try {
+    // v0.11.28 — a versão vinha de uma constante chumbada no preload que eu
+    // esqueci de atualizar: o log do André dizia "0.11.19" rodando outra coisa,
+    // e isso atrapalhou o diagnóstico de verdade. Quem sabe a versão real é o
+    // renderer, então é ele que carimba.
+    if (versaoDoApp) pacote.versao = versaoDoApp;
     const blob = new Blob([JSON.stringify(pacote, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -943,6 +953,46 @@ function renderExpedicao(state) {
       <div class="expBar"><div class="expFill" style="width:${pct}%"></div></div>
     </div>`;
   });
+  // v0.11.26 — a auto expedição precisa do mapa "objetivo → criaturas", que só
+  // existe no painel de expedição do jogo. Sem ele a feature fica ligada e
+  // parada, sem dizer nada — foi o que aconteceu. Agora o painel mostra quais
+  // objetivos já têm o mapa e o que fazer pelos que faltam.
+  const mapa = state.expedicaoMapa;
+  if (mapa) {
+    // v0.11.28 — mostra também de ONDE veio a lista de criaturas: do painel do
+    // jogo (explícito) ou do catálogo por `bestiaryId` (dedução, pode estar
+    // incompleta). O usuário merece saber a diferença antes de confiar.
+    for (const e of ex.entries) {
+      const m = mapa[e.label];
+      if (!m || Number(e.progress) >= Number(e.quota)) continue;
+      linhas.push(
+        `<p class="fieldHint">${escapeHtml(e.label)}: caçando <b>${m.criaturas.map(escapeHtml).join(", ")}</b>` +
+          (m.fonte === "catálogo" ? " — deduzido do catálogo, a lista pode estar incompleta." : ".") +
+          "</p>"
+      );
+    }
+    const faltando = ex.entries.filter((e) => !mapa[e.label] && Number(e.progress) < Number(e.quota));
+    if (faltando.length) {
+      const tr = state.expedicaoTracker;
+      linhas.push(
+        `<p class="fieldHint">Ainda não sei quais criaturas contam para ${faltando
+          .map((e) => `<b>${escapeHtml(e.label)}</b>`)
+          .join(" e ")}.</p>`
+      );
+      // v0.11.27 — diagnóstico em vez de instrução chutada. O painel de
+      // expedição é elemento de HUD, não modal: se ele está na tela e mesmo
+      // assim o mapa falta, mandar "abra o painel" não resolveria nada.
+      if (tr && tr.presente === false) {
+        linhas.push('<p class="fieldHint">O painel de expedição do jogo não está na tela desta conta. Ele costuma ficar visível pra quem tem guild — se este personagem tem, me avise que eu investigo.</p>');
+      } else if (tr && tr.presente) {
+        linhas.push(
+          `<p class="fieldHint">O painel de expedição <b>está</b> na tela, com ${tr.rotulos.length} linha(s): ${tr.rotulos
+            .map((x) => `${escapeHtml(x.rotulo || "sem rótulo")} (${x.criaturas.length} criatura(s))`)
+            .join(", ") || "nenhuma"}. Se os rótulos acima não batem com os objetivos, o problema é de correspondência de nome — me manda este print.</p>`
+        );
+      }
+    }
+  }
   if (resta) linhas.push(`<p class="fieldHint">Reseta em ${horas}h ${min}min.</p>`);
   expedicaoListaEl.innerHTML = linhas.join("");
 }
@@ -1528,11 +1578,60 @@ function tile(rotulo, valor, sub) {
 // está explicado). Fechado por padrão porque o André pediu simples.
 function detalheDoLoot(ec) {
   const partes = [];
+  // v0.11.24 — por que os números estão zerados?
+  //
+  // O André reportou o analisador todo em zero, e as duas explicações
+  // possíveis dão a MESMA tela: a sessão acabou de começar, ou ela está sendo
+  // zerada repetidamente. Rodando a captura dele pelo motor, os números saem
+  // certos (112 mortes, 8.708 XP) — então o defeito não é de leitura. Estas
+  // três linhas dizem qual das duas é, sem precisar de mais uma ida e volta.
+  const r = ec.resumo;
+  if (r && r.sessaoIniciadaEm !== undefined) {
+    const idade = r.sessaoIniciadaEm ? Math.round((Date.now() - r.sessaoIniciadaEm) / 1000) : null;
+    partes.push('<div class="ecoSub">Diagnóstico</div>');
+    partes.push(
+      `<div class="ecoRow"><span>Sessão começou há</span><b>${idade === null ? "nunca iniciou" : `${idade}s`}</b></div>`
+    );
+    partes.push(`<div class="ecoRow"><span>Mensagens do protocolo</span><b>${fmtNum(r.mensagensDoProtocolo || 0)}</b></div>`);
+    partes.push(`<div class="ecoRow"><span>Ficha do personagem lida</span><b>${r.amostrasDeXp ? "sim" : "não"}</b></div>`);
+    if (idade !== null && idade < 15) {
+      partes.push('<p class="fieldHint">A sessão é recente — é normal os números ainda estarem baixos. Se este tempo <b>não passar de alguns segundos</b> enquanto você caça, a sessão está sendo reiniciada e é isso que zera tudo.</p>');
+    }
+  }
   partes.push(`<div class="ecoRow"><span>Loot (preço de NPC)</span><b>${fmtNum(ec.valorNpc)}</b></div>`);
-  partes.push(`<div class="ecoRow"><span>Loot (preço de leilão)</span><b>${fmtNum(ec.valorLeilao)}</b></div>`);
-  const ganho = ec.valorLeilao - ec.valorNpc;
-  if (ganho > 0) {
-    partes.push(`<p class="fieldHint">Leiloando em vez de vender rápido, esta sessão renderia <b>${fmtNum(ganho)}</b> a mais.</p>`);
+
+  // v0.11.25 — O TOTAL DE LEILÃO SAIU, E ISSO É UMA CORREÇÃO, NÃO UM CORTE.
+  //
+  // A tabela `auction` do tipo 57 é o PREÇO PEDIDO por jogadores, não valor de
+  // mercado. Na tabela real do jogo tem `banana skin` com NPC 1 e leilão
+  // 6.000.000; `tortoise egg` com NPC 10 e leilão 300.000. Somar isso dava, na
+  // sessão do André, "leiloando você ganharia 6,4kk a mais" — um número que
+  // não corresponde a dinheiro nenhum que ele conseguiria.
+  //
+  // Eu validei essa conta com o protection amulet (100 → 1.600), que parecia
+  // razoável, e não testei contra o caso absurdo. Lição: quando a fonte é
+  // preço pedido por gente, a validação tem que incluir o outlier, não só a
+  // amostra que confirma.
+  //
+  // O que SOBREVIVE é a parte acionável: quais itens do loot valem muito mais
+  // no leilão do que na venda rápida. Isso continua útil item a item, mesmo
+  // com o preço sendo uma oferta — é um alerta de "olha isso antes de vender",
+  // não uma promessa de valor.
+  const naoVenda = (ec.itens || [])
+    .filter((i) => typeof i.leilao === "number" && typeof i.npc === "number" && i.npc > 0 && i.leilao / i.npc >= 3)
+    // Ordena pela RAZÃO leilão/NPC, não por "quanto daria no total" —
+    // multiplicar oferta por quantidade é exatamente o erro que esta versão
+    // está corrigindo, e ele não pode voltar nem como critério de ordenação.
+    .sort((a, b) => b.leilao / b.npc - a.leilao / a.npc)
+    .slice(0, 5);
+  if (naoVenda.length) {
+    partes.push('<div class="ecoSub">Vale olhar antes de vender</div>');
+    for (const i of naoVenda) {
+      partes.push(
+        `<div class="ecoRow"><span>${escapeHtml(i.nome)} ×${fmtNum(i.qtd)}</span><b>${fmtNum(i.npc)} no NPC · <em class="ecoUp">${fmtNum(i.leilao)} pedido no leilão</em></b></div>`
+      );
+    }
+    partes.push('<p class="fieldHint">Preço de leilão é o que <b>alguém está pedindo</b>, não o que você receberia — a tabela do jogo tem item barato anunciado por milhões. Serve pra notar o que não vale a venda rápida, não pra somar.</p>');
   }
   if (ec.itensSemPreco > 0) {
     partes.push(
@@ -1551,9 +1650,12 @@ function detalheDoLoot(ec) {
     partes.push('<div class="ecoSub">Loot</div>');
     for (const i of ec.itens.slice(0, 8)) {
       const v = typeof i.npc === "number" ? fmtNum(i.npc * i.qtd) : "—";
+      // v0.11.25 — mostra o preço PEDIDO por unidade, nunca `leilao * qtd`:
+      // multiplicar uma oferta pela quantidade sugere um total realizável que
+      // não existe.
       const l =
         typeof i.leilao === "number" && typeof i.npc === "number" && i.leilao > i.npc
-          ? ` <em class="ecoUp">leilão ${fmtNum(i.leilao * i.qtd)}</em>`
+          ? ` <em class="ecoUp">${fmtNum(i.leilao)} pedido</em>`
           : "";
       partes.push(`<div class="ecoRow"><span>${escapeHtml(i.nome)} ×${fmtNum(i.qtd)}</span><b>${v}${l}</b></div>`);
     }
@@ -1604,7 +1706,6 @@ function renderEconomia(st) {
     return;
   }
 
-  const ganho = ec.valorLeilao - ec.valorNpc;
   const linhas = [];
 
   // v0.11.15 — quando o tipo 41 está chegando, os números são os do próprio
@@ -1634,18 +1735,15 @@ function renderEconomia(st) {
     );
   }
 
+  // v0.11.25 — "Loot (preço de leilão)" e "Saldo leiloando" saíram daqui pelo
+  // mesmo motivo do bloco de detalhe: somar preço PEDIDO por jogadores não dá
+  // dinheiro nenhum. Este caminho é legado (hoje o `resumo` sempre existe),
+  // mas código morto que mente continua sendo passivo.
   linhas.push(
     `<div class="ecoRow"><span>Loot (preço de NPC)</span><b>${fmtNum(ec.valorNpc)}</b></div>`,
-    `<div class="ecoRow"><span>Loot (preço de leilão)</span><b>${fmtNum(ec.valorLeilao)}</b></div>`,
     `<div class="ecoRow"><span>Custo de suprimento</span><b class="ecoNeg">−${fmtNum(ec.custoTotal)}</b></div>`,
-    `<div class="ecoRow ecoTotal"><span>Saldo vendendo no NPC</span><b>${fmtNum(ec.saldoNpc)}</b></div>`,
-    `<div class="ecoRow ecoTotal"><span>Saldo leiloando</span><b>${fmtNum(ec.saldoLeilao)}</b></div>`
+    `<div class="ecoRow ecoTotal"><span>Saldo vendendo no NPC</span><b>${fmtNum(ec.saldoNpc)}</b></div>`
   );
-  if (ganho > 0) {
-    linhas.push(
-      `<p class="fieldHint">Leiloando em vez de vender rápido você ganharia <b>${fmtNum(ganho)}</b> a mais nesta sessão.</p>`
-    );
-  }
   if (ec.itensSemPreco > 0) {
     linhas.push(
       `<p class="fieldHint">${ec.itensSemPreco} ${ec.itensSemPreco === 1 ? "item ficou" : "itens ficaram"} de fora da soma por não ter preço na tabela do jogo.</p>`
@@ -1664,7 +1762,7 @@ function renderEconomia(st) {
     for (const i of ec.itens.slice(0, 8)) {
       const v = typeof i.npc === "number" ? fmtNum(i.npc * i.qtd) : "—";
       const l = typeof i.leilao === "number" && typeof i.npc === "number" && i.leilao > i.npc
-        ? ` <em class="ecoUp">leilão ${fmtNum(i.leilao * i.qtd)}</em>`
+        ? ` <em class="ecoUp">${fmtNum(i.leilao)} pedido</em>`
         : "";
       linhas.push(`<div class="ecoRow"><span>${escapeHtml(i.nome)} ×${fmtNum(i.qtd)}</span><b>${v}${l}</b></div>`);
     }
@@ -1782,8 +1880,21 @@ function renderSpawnLive(state) {
   const partes = [];
   partes.push(`${s.vivos} ${s.vivos === 1 ? "criatura viva" : "criaturas vivas"}`);
   partes.push(`sem nascer há ${Math.round(s.paradoMs / 1000)}s`);
-  if (s.tipicoMs) partes.push(`ritmo normal ~${Math.round(s.tipicoMs / 1000)}s`);
-  else partes.push(`aprendendo o ritmo (${s.amostras}/8)`);
+
+  // v0.11.33 — os dois critérios aprendidos POR CAÇADA, cada um dizendo onde
+  // está e do que precisa. O painel antigo só mostrava "aprendendo o ritmo
+  // (0/8)" e era exatamente esse 0/8 que denunciava que o critério de tempo
+  // nunca calibrava — o texto tem que deixar isso visível, não escondê-lo.
+  if (s.loteLimiarMs) {
+    partes.push(`lote normal ~${Math.round(s.loteTipicoMs / 1000)}s, sai com ${Math.round(s.loteLimiarMs / 1000)}s`);
+  } else {
+    partes.push(`aprendendo o ritmo dos lotes (${s.loteAmostras}/${s.loteMinimo})`);
+  }
+  if (s.tilesLimiar) {
+    partes.push(`andou ${s.tilesAndados} tiles sem matar (normal ${s.tilesTipicos}, sai com ${s.tilesLimiar})`);
+  } else {
+    partes.push(`aprendendo o mapa (${s.tilesAmostras}/${s.tilesMinimo} mortes)`);
+  }
   if (s.mortesNaVoltaAnterior !== null && s.mortesNaVoltaAnterior !== undefined) {
     partes.push(`${s.mortesNaVoltaAnterior} mortes na última volta`);
   }
@@ -1794,11 +1905,46 @@ function renderSpawnLive(state) {
   el.hidden = false;
 }
 
+// v0.11.31 — o que a leitura por WebSocket está enxergando deste personagem.
+//
+// Existe pelo mesmo motivo da linha do spawn acima: sem ver, "migrei pro
+// WebSocket" é uma promessa. A capacidade, em particular, é DERIVADA (soma de
+// pesos) e entra em modo de conferência contra o número do jogo — esta linha
+// é onde dá pra ver se ela bateu.
+function renderProtocoloVivo(state) {
+  const el = document.getElementById("protoLive");
+  if (!el) return;
+  const p = state && state.protocolo;
+  if (!p) {
+    el.hidden = true;
+    return;
+  }
+  const partes = [];
+  partes.push(p.nome ? `personagem "${p.nome}"` : "personagem ainda não identificado");
+  if (p.vocacao) partes.push(`${p.vocacao}${p.level ? ` ${p.level}` : ""}`);
+  if (!p.inventario) {
+    partes.push("inventário não recebido (capacidade segue pelo jogo)");
+  } else if (p.capacidadeConferida) {
+    partes.push(`capacidade conferida (${Number(p.capacidade).toFixed(2)})`);
+  } else {
+    const dif = typeof p.capacidadeDiferenca === "number" ? ` (diferença de ${p.capacidadeDiferenca.toFixed(2)})` : "";
+    partes.push(`capacidade em conferência${dif}`);
+  }
+  // v0.11.32 — item sem peso é a explicação mais provável de uma divergência,
+  // então ele aparece nomeado em vez de ficar só no log.
+  if (Array.isArray(p.itensSemPeso) && p.itensSemPeso.length) {
+    partes.push(`sem peso conhecido: ${p.itensSemPeso.slice(0, 3).join(", ")}`);
+  }
+  el.textContent = `WebSocket: ${partes.join(" · ")}.`;
+  el.hidden = false;
+}
+
 function syncAutomationPanel() {
   const tabId = selectedAutomationTabId;
   if (!tabId) return;
   const state = automationState.get(tabId) || {};
   renderSpawnLive(state);
+  renderProtocoloVivo(state);
 
   automationDotEl.classList.toggle("on", !!state.running || !!state.hunting);
   automationDotEl.classList.toggle("err", state.status === "Erro");

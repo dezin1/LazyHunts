@@ -1,5 +1,261 @@
 # Changelog
 
+## 0.11.34 — 2026-09-14
+
+### O que a caçada ensinou não pode morrer quando o app fecha
+
+Furo achado ao explicar o funcionamento da v0.11.33: o perfil só ia pro disco a cada 20 mortes ou ao trocar de caçada. Fechar o Swag no meio de uma caçada jogava fora o que estava sendo aprendido — inclusive as amostras de **lote**, que são poucas e caras (4 já calibram, e cada uma leva 7 a 20 segundos pra aparecer).
+
+Agora a gravação também acontece por tempo, no máximo uma vez a cada 30 segundos, e ao desligar a automação.
+
+O teste dessa gravação pegou um defeito meu na hora: com o marcador de "última gravação" em zero, a **primeira** gravação ficava bloqueada pelos 30 segundos iniciais — justamente a janela em que o app acabou de abrir e é mais provável ser fechado. Zero agora significa "nunca gravou, grava agora".
+
+6 checagens novas; 274 no conjunto todo.
+
+## 0.11.33 — 2026-09-14
+
+### Sair da caçada seca, calibrado por caçada
+
+Você disse duas coisas: *"ainda acho que demora demaaais"* e *"caçada é um respawn diferente, um lugar diferente, bichos diferentes, tempos diferentes... não poderia ser padrão"*. As duas estavam certas — e a medição derrubou as duas soluções que a gente tinha imaginado.
+
+**Primeiro, por que demorava.** O critério de tempo mede o intervalo entre *criaturas*. Só que o servidor nasce bicho em **lote**: Troll Hills fez 80 nascimentos em 8 lotes de ~8; Tortoise Shore, 66 em 7 lotes de ~10. Dentro de um lote o intervalo é de milissegundos. Rodando a função real contra suas capturas, o resultado é que ela **nunca calibra**: numa caçada de 3,5 minutos com 80 nascimentos ela junta `0/8` amostras — que é exatamente o que seu print mostrava. E quando junta, a mediana dá 4s, o limiar cai abaixo do piso, e o piso de 90s vence de novo. Na prática o detector **sempre esperou 90 segundos**, em qualquer caçada.
+
+**Segundo, o que não funcionaria.** Mapear o tamanho dos mapas parecia a saída — e o tipo 88 entrega o terreno com `blocked` por tile, então dá pra medir: Troll Hills tem 1.281 tiles andáveis, Tortoise Shore tem 4.159. Mas é a caçada **pequena** que tem o p90 **maior** (9–10 tiles entre mortes contra 2–4). A densidade de bicho manda mais que o tamanho do mapa, e um limiar em "% do mapa" erraria feio — além de o tipo 88 custar ~3 MB por mensagem.
+
+**O que funciona é aprender, caçada por caçada.** Agora existem dois critérios novos, cada um com o número **dessa** caçada, aprendido no seu jogo e guardado em disco:
+
+- **"o mundo parou de produzir"** — silêncio entre lotes maior que 3× o normal dali. Troll Hills aprende 11s e sai com 33s; Tortoise Shore aprende 22s e sai com 66s. No seu teste, o buraco real foi de **75s numa caçada cujo normal é 7s**.
+- **"já varri o lugar"** — andou mais de 8× o normal de tiles distintos sem matar nada. Troll Hills aprende 9 e sai com 72 tiles; e 72 tiles são **18 segundos**, não 90.
+
+Os dois valem em paralelo porque falham em situações diferentes: preso num canto, os tiles não acumulam e o critério de lote responde; varrendo o mapa atrás de bicho, os tiles respondem antes. Tudo continua atrás da trava que já existia — **nada vivo na tela**.
+
+A chave é o `scenarioId` do tipo 54 (`troll-hunt`, `tortoise-hunt`), estável entre instâncias e que já era escutado. É o "mapear as caçadas" que você pediu, só que medido no seu jogo em vez de escrito à mão — e **o aprendizado sobrevive à renovação**, senão o detector recomeçaria do zero logo depois de cada vez que age.
+
+O painel passou a mostrar os dois perfis e o que falta pra cada um calibrar. Aquele `0/8` não era ruído: era o defeito aparecendo, e por isso o texto novo continua mostrando o contador em vez de escondê-lo.
+
+Replay das capturas reais pelas funções entregues: dispara no trecho seco **18s depois da última morte** (contra 90s), zero disparos nos trechos saudáveis, e as duas caçadas aprendem ritmos diferentes (11s e 22s) na mesma sessão. 18 checagens novas; 268 no conjunto todo.
+
+## 0.11.32 — 2026-09-14
+
+### A rede de segurança do cálculo de peso
+
+O peso vem dentro de cada item, na própria mensagem — medido: dos 4.087 itens que passam pelo protocolo nas suas capturas, 4.085 trazem `weight`, e nos caminhos que alimentam a capacidade (74, 55, 60, 62) a cobertura é **806 de 806**. Então o catálogo não é necessário pro caso normal. Ele entrou pro caso anormal.
+
+Agora o peso de um slot tem três fontes, nessa ordem: o que veio na mensagem, o **catálogo do tipo 26** (835 itens com peso, chega uma vez por login), e "não sei".
+
+O "não sei" continua virando zero no somatório — inventar um peso seria pior. O que mudou é que ele deixou de ser silêncio: o item fica registrado pelo nome e aparece **no aviso de divergência e no painel**. Isso transforma um número que não bate em diagnóstico:
+
+- *"diferença de 3.20 — passaram pela bag 1 item sem peso conhecido: experience scroll"* → achei o culpado;
+- *"diferença de 1.00 — nenhum item passou sem peso, então a diferença vem de outro lugar"* → o próximo suspeito é o tipo 62 (container aberto), que ficou de fora justamente por eu não ter certeza do que ele é.
+
+E se a conferência bater **mesmo com um item desconhecido na bag**, então zero era o peso certo e o caso se resolve sozinho.
+
+Detalhe de custo: escuto só o tipo **26**, não o 66. Medido, o 66 é subconjunto estrito do 26 (775 itens contra 836, zero exclusivos) — ouvir os dois seria parsear 109 KB a mais por login sem ganhar um item.
+
+11 checagens novas, incluindo o resgate de peso pelo catálogo contra o catálogo real da sua captura. 250 no conjunto todo.
+
+## 0.11.31 — 2026-09-14
+
+### As leituras que ainda estavam no DOM
+
+Fui atrás das três que faltavam. Duas migraram, uma não — e explico a que não.
+
+**Nome, vocação base e level do personagem** agora saem do protocolo. O tipo 103 diz o meu id no login, e o tipo 15 anuncia o jogador desse id com nome, level e vocação. Antes isso dependia do `.header-character-name` estar desenhado; agora o DOM continua na frente (é ele que mostra a vocação **promovida**), mas quando ele está calado o protocolo responde. Esse estado é **zerado em toda troca de personagem e em toda queda de socket** — um nome de personagem velho decide atribuição de Telegram, rodízio e liderança de party, e seria o tipo de erro que não aparece em log nenhum.
+
+**Capacidade restante** é a migração de verdade, e ela vem com uma ressalva que faço questão de deixar por escrito: **o servidor não manda a capacidade restante.** O `capacity` do tipo 77 é o *máximo* — constante em 976 amostras de três capturas suas, com o personagem caçando e enchendo a bag o tempo todo. O que dá pra fazer é **reconstruir o peso carregado**: o tipo 74 entrega o inventário inteiro no login (bag, satchel, equipamento) com o peso de cada item, e o tipo 55 entrega o estado novo de cada slot que muda. Restante = máximo − soma.
+
+Como isso é **derivado e não lido**, ele entra em modo de **conferência**: enquanto o HUD estiver legível, quem manda continua sendo o número do jogo, e o modelo só passa a valer sozinho depois de bater com ele **três vezes seguidas**. Se divergir, se marca como não-confiável e avisa **uma vez** no log, com os dois números. Não dava pra validar isso offline — nas capturas não existe o valor do HUD pra comparar —, então a validação acontece na sua máquina, à vista, e até ela passar nada muda de comportamento.
+
+O buraco que isso fecha é real: antes de o HUD montar, a capacidade era `null`, e `null` ali significa "não sei" — o ciclo de venda simplesmente não acontecia até a interface aparecer.
+
+**O que NÃO migrou, e por quê:**
+
+- **Treino** — não existe em nenhuma das sete capturas (o personagem nunca estava treinando durante uma). Chutar um tipo aqui foi o que custou três versões na v0.11.10–13. Continua no DOM até uma captura com treino ligado.
+- **Vocação que aparece no painel** — o protocolo manda a vocação **base** (`"druid"`), o jogo mostra a **promovida** ("ED"). Um Druid e um Elder Druid são a mesma palavra no protocolo e coisas diferentes na tela, e o sync de EK compara justamente com "Elder Druid". Trocar a fonte aqui ligaria a automação pra quem não deveria. A vocação base fica visível no painel, mas quem decide continua sendo o DOM.
+
+Uma linha nova no painel de caçada mostra o que a leitura por WebSocket está enxergando — personagem, vocação e o estado da conferência da capacidade. É pelo mesmo motivo da linha do spawn: sem ver, "migrei pro WebSocket" é promessa.
+
+37 checagens novas rodando as funções reais contra as suas capturas, incluindo o replay das 113 mudanças de inventário do Kina (272.26 → 202.36 de capacidade) conferido contra uma reconstrução manual item a item. 239 no conjunto todo.
+
+## 0.11.30 — 2026-09-14
+
+### Sair da caçada não podia significar abandonar a expedição
+
+Você viu os dois sintomas em sequência: o personagem saiu da expedição por estar sem bicho na tela e **voltou pra caçada principal**; depois disso, **não considerou mais a expedição**.
+
+A causa não foi um `if` errado, foi arquitetura. A decisão de expedição morava num lugar só: o trecho do monitor que trata "não está caçando". Todos os outros caminhos que reentram numa caçada — renovar por spawn seco, voltar depois de vender o loot — tinham cada um a sua própria regra, e as duas apontavam pra `cfg.huntName`, a caçada do menu. Qualquer saída no meio da expedição caía na caçada principal.
+
+E de lá ele não voltava porque a troca no meio da caçada tem trava de 10 minutos e só dispara quando a caçada atual não serve pra **nenhum** objetivo pendente. Se a principal já matasse algo de algum objetivo, ficava lá pra sempre.
+
+Agora existe **uma função só** que responde "qual caçada e qual tier agora", e os três caminhos perguntam pra ela. Enquanto houver objetivo pendente a resposta é a caçada da expedição no tier mais difícil disponível; quando todos terminarem, volta a ser a configurada — que é a regra que você deu: *"se está fazendo expedição tem que continuar nela, só desconsidera quando finalizar todas"*.
+
+Dois detalhes que vieram junto:
+
+- a renovação por spawn seco reentrava com o **tier do menu**, não com o mais difícil — o conserto da v0.11.29 não alcançava esse caminho;
+- se a caçada em que você já está serve o objetivo, ela é a resposta mesmo que outra do catálogo mate mais criaturas da lista. Sem isso, cada renovação de spawn poderia trocar de mapa — carrossel, não expedição.
+
+18 checagens novas reproduzindo o caso exato, inclusive com o cache do nome da caçada frio (que era o jeito mais rápido de cair na principal).
+
+## 0.11.29 — 2026-09-14
+
+### A expedição entrava no nível mais fácil
+
+O tier vinha do catálogo como **nome** ("Reckless") e era casado com o texto do botão. Quando esse tier não está disponível pro personagem naquela caçada, o nome não casa, a seleção falha — e o jogo começa com o botão que já estava marcado, que é o primeiro: o mais fácil.
+
+Sua reclamação já trazia a regra certa: **o nível maior _disponível_**. Então a expedição deixou de pedir um nome e passou a pedir o **último botão de tier que existe e está habilitado**.
+
+Isso conserta três coisas de uma vez:
+
+- **tier bloqueado por level** deixa de derrubar a escolha (botão desabilitado é ignorado — `disabled`, `aria-disabled` e classe `locked`);
+- **independe de idioma** — se o jogo traduzir para "Cauteloso / Ousado / Imprudente", continua funcionando, enquanto casar por nome quebraria;
+- **o log diz qual tier entrou**, não só que entrou. Foi a falta disso que deixou "começou no mais fácil" passar despercebido.
+
+A escolha por nome continua valendo para a caçada normal, que é onde você configura o tier à mão.
+
+12 checagens novas, incluindo a reprodução do caso real: catálogo anuncia três tiers, o personagem só tem dois liberados.
+
+
+## 0.11.28 — 2026-09-14
+
+### A expedição não depende mais do painel do jogo (na maioria dos casos)
+
+Seu log mostrou o personagem saindo de Tortoise Shore pra cidade e **voltando pra Tortoise Shore** — a expedição não agia porque não sabia quais criaturas contam para "Trolls".
+
+Achei uma terceira fonte, medida na sua expedição real: o `familyId` do tipo 33 casa com o `bestiaryId` dos monstros do catálogo (tipo 42).
+
+```
+trolls        → bestiaryId "troll"   → Troll,  em Troll Hills
+amazon-camp   → bestiaryId "amazon"  → Amazon, em Amazon Camp
+restless-dead → não casa (é uma categoria, agrupa várias criaturas)
+```
+
+Dois dos três objetivos de hoje resolvem sozinhos — inclusive o **Trolls**, que é o único pendente. Só aceita casamento exato com um `bestiaryId` que existe no catálogo: sem "parecido", sem "começa com". Errar aqui manda o personagem caçar a coisa errada por horas.
+
+**Ordem das fontes:** painel do jogo (explícito e completo) → o que já foi guardado em disco → dedução pelo catálogo. E o painel diz de qual veio: quando é dedução, avisa que **a lista pode estar incompleta** — "Trolls" talvez conte Swamp Troll também, e só o painel do jogo sabe disso. A caçada escolhida continua válida, só pode não ser a melhor.
+
+Objetivo que nenhuma das três fontes resolve continua sem ação **e dizendo isso** — não tira o personagem da caçada às cegas.
+
+### A versão no log estava mentindo
+
+Seu log veio marcado como "0.11.19" rodando outra coisa. Era uma constante chumbada no preload que eu esqueci de atualizar, e ela atrapalhou justamente o diagnóstico que eu tinha pedido. Agora quem carimba é o renderer, que sabe a versão real do app.
+
+
+## 0.11.27 — 2026-09-14
+
+### A expedição agora tira o personagem de uma caçada que não serve pra nada
+
+Ligar a expedição no meio de uma caçada não tinha efeito nenhum: a decisão só rodava no trecho de "não está caçando", então ela esperava o personagem sair por conta própria — bag cheia, stamina ou spawn seco. Na conta medida isso deu 2 ciclos em 1h04. Meia hora sem reagir, com o painel prometendo que "a expedição passa a mandar na escolha da caçada".
+
+Agora ela avalia durante a caçada também, com a regra que você escolheu: **sai só se a caçada atual não mata nenhuma criatura de nenhum objetivo pendente.** Se serve, fica — trocar à toa perde o loot na bag e o tempo de transição. Trava de 10 minutos entre trocas pra não virar carrossel quando dois objetivos empatam, e sem o mapa de criaturas ela não tira o personagem de lugar nenhum.
+
+### "Abra o painel de expedição" pode ser instrução errada minha
+
+Pelas notas do projeto, `.expedition-tracker` é um elemento do **HUD** — some só pra quem não tem guild —, não um modal que se abre. Foi mapeado ao vivo com o personagem caçando. Ou seja, ele já devia ter sido lido sozinho, e eu te mandei fazer uma coisa que talvez nem resolva.
+
+Em vez de insistir no chute, a aba Guild passa a mostrar **o que existe de verdade**: se o elemento está na tela e quais rótulos ele traz, com a contagem de criaturas de cada um. Isso separa "não achei o elemento" de "achei, mas o rótulo não bate com o objetivo" — que são problemas diferentes e têm correções diferentes.
+
+
+## 0.11.26 — 2026-09-14
+
+### A auto expedição estava ligada e parada, sem dizer nada
+
+Fui verificar a feature e achei o furo. Ela precisa de três coisas, e só duas estavam garantidas:
+
+| o quê | de onde | estado |
+|---|---|---|
+| progresso e quota de cada objetivo | tipo 33 | ✅ exato e ao vivo |
+| qual caçada mata cada criatura | tipo 42 | ✅ catálogo completo |
+| **quais criaturas contam para o objetivo** | painel de expedição do jogo | ❌ só com o painel **aberto** |
+
+Com o painel fechado, a lista de criaturas vinha vazia, nenhuma caçada era escolhida, e **nada acontecia — sem log, sem status, sem pista**. A feature parecia ligada e não fazia nada.
+
+**Por que isso não sai do protocolo:** o `familyId` do tipo 33 é `"restless-dead"`, que não é criatura nem id de caçada — é uma categoria que agrupa Skeleton, Ghoul, Mummy. Testei contra o catálogo real: `"Trolls"` e `"Amazons & Valkyries"` até dariam por semelhança de nome, `"Restless Dead"` não dá de jeito nenhum. O painel continua sendo a fonte.
+
+**A correção:** o mapa é lido do painel e **guardado em disco**. Basta abrir o painel de expedição uma vez por conta; depois disso funciona sozinho, com o painel fechado, entre reinícios.
+
+**E a falha deixou de ser silenciosa.** Enquanto o mapa não existir, o log diz exatamente o que fazer, e a aba Guild lista quais objetivos ainda faltam mapear. "Ligado e parado" não pode mais ser confundido com "ligado e funcionando" — foi esse padrão que escondeu o detector de spawn por três versões e o analisador por uma.
+
+### Preço de leilão: removido de vez
+
+Você deu duas saídas — deixar o jogador escolher item a item, ou tirar. Tirei, e não por trabalho: mesmo com você escolhendo os itens, o número continuaria sendo **o que alguém pede**, não o que você recebe. O seletor entregaria um valor igualmente não-realizável, só que com a sua assinatura embaixo.
+
+Fica a lista **"vale olhar antes de vender"**, item a item, que já existe e responde à pergunta original — o que não mandar na venda rápida.
+
+
+## 0.11.25 — 2026-09-14
+
+### O total de leilão estava mentindo, e saiu
+
+No seu print de 1h04, o painel dizia: *"leiloando em vez de vender rápido, esta sessão renderia **6,4kk** a mais"*. Esse número não corresponde a dinheiro nenhum que você conseguiria.
+
+A tabela `auction` do tipo 57 é o **preço pedido por jogadores**, não valor de mercado. A tabela real do jogo tem:
+
+```
+banana skin    npc 1     leilão 6.000.000
+tortoise egg   npc 10    leilão   300.000
+grapes         npc 3     leilão   100.000
+cucumber       npc 2     leilão   100.000
+```
+
+São **32 itens** com preço pedido mais de mil vezes o valor de NPC. Você estava em **Tortoise Shore**: 21 ovos de tartaruga a 300k já dão 6,3kk — é exatamente o seu número.
+
+**O erro foi meu, e de método.** Eu validei essa conta com o protection amulet (100 no NPC → 1.600 no leilão), que parecia razoável, e não testei contra o caso absurdo. Quando a fonte é preço pedido por gente, a validação tem que incluir o outlier — não só a amostra que confirma a hipótese.
+
+**O que saiu:** o total "Loot (preço de leilão)", o "Saldo leiloando" e a promessa de ganho. Saíram também do caminho legado do painel, que hoje nem roda — código morto que mente continua sendo passivo.
+
+**O que ficou**, porque continua acionável: a lista **"Vale olhar antes de vender"**, item a item, com o preço unitário pedido e um aviso de que é oferta, não recebimento. Serve pra você notar o que não mandar na venda rápida — que era o pedido original —, sem fingir que dá pra somar.
+
+O preço de leilão nunca mais é multiplicado por quantidade em lugar nenhum, nem como critério de ordenação. Tem teste travando isso, construído em cima da tabela real que revelou o problema.
+
+
+## 0.11.24 — 2026-09-14
+
+### Diagnóstico do analisador zerado
+
+Você reportou o analisador todo em zero. Antes de mexer em qualquer coisa, passei a sua captura inteira pelo motor de verdade: ele produz **112 mortes, 8.708 XP, custo 616, lucro 1.450, 189k XP/h**. Ou seja, a leitura está certa — o defeito não está em ler o protocolo.
+
+Sobram duas explicações, e elas dão **exatamente a mesma tela**: ou a sessão acabou de começar (app reiniciado), ou ela está sendo zerada repetidamente. Olhando só o código eu não consigo separar as duas, e chutar aqui é como eu perdi três versões no detector de spawn.
+
+Então o painel passou a responder isso sozinho. Dentro de "Detalhe do loot e do gasto":
+
+- **Sessão começou há** — se esse número não passar de alguns segundos enquanto você caça, é reinício em loop, e é isso que zera tudo.
+- **Mensagens do protocolo** — se estiver em zero, o gancho não está recebendo.
+- **Ficha do personagem lida** — se for "não", o tipo 77 não está chegando e o XP não teria de onde sair.
+
+Abra esse bloco com o personagem caçando e me diga os três números. Com eles eu sei onde mexer em vez de adivinhar.
+
+
+## 0.11.23 — 2026-09-14
+
+### O catálogo de caçadas não precisa mais abrir menu nenhum
+
+O tipo 42 traz o catálogo inteiro no login: **60 caçadas**, cada uma com id, nome, monstros e os tiers `Cautious/Bold/Reckless` já com o `monsterCount` — que é o **tamanho do pull**, o número que te deu dor de cabeça na v0.9.5.
+
+O caminho antigo abria o seletor de caçadas, limpava o campo de busca, esperava, lia os botões e fechava a janela — cliques reais só pra montar uma lista. E era frágil de um jeito específico: quando os botões de tier não apareciam nos 4 segundos de espera, o resultado vazio ia pro cache e travava aquela caçada com o dropdown vazio pra sempre. Esse modo de falha deixa de existir.
+
+### Experiência e "estou na cidade" pelo protocolo
+
+**XP** sai do `experience` do tipo 77, que chega ~2× por segundo, em vez do atributo `title` do `.hud-exp` ("Experiência 1.827.258/6.716.200") — que só existe depois do HUD montar e quebraria se o jogo mudasse a formatação do número.
+
+**"Estou na cidade"** sai do tipo 54. O teste antigo confundia duas coisas: ele olhava se o botão "Venda rápida" está na tela — ou seja, "estou num lugar onde dá pra vender" — e usava isso como "estou na cidade". Antes do HUD montar, a resposta era `false` com o personagem parado na cidade.
+
+### O peixe de 5.221 não era bug meu
+
+Ficou marcado como suspeito na v0.11.21: `fish ×2` valendo 10,4k no leilão contra 2 gp no NPC. Com a tabela de preços completa — que só veio agora, porque o log de dentro do Swag passou a salvar a primeira amostra de cada tipo inteira — dá pra confirmar: `fish`, itemId 3578, NPC **2**, leilão **5.221**. O preço é real; é mercado de jogador.
+
+De quebra, a tabela tem **784 itens com preço de NPC e 524 com preço de leilão**, e confirma por que o gold coin precisou de tratamento próprio: ele não está em nenhuma das duas.
+
+### Onde a migração para o WebSocket para
+
+Isto fecha tudo que está mapeado. O que **continua no DOM, e por quê**:
+
+- **capacidade restante** — o tipo 77 tem `capacity`, mas é o **máximo** (constante em 588721 durante uma caçada inteira com loot entrando). Trocar faria o bot achar que nunca enche.
+- **nome e vocação do personagem** — o protocolo dá a vocação em inglês (`druid`) e a interface mostra a abreviação promovida (`ED`); traduzir depende da promoção.
+- **está treinando** — nenhum tipo mapeado; o treino só aparece como toast.
+- **tela de seleção de personagem** — ali o socket do jogo ainda nem existe.
+- **todas as ações** — clicar, vender, entrar em caçada, treinar. Foi o combinado desde o começo.
+
+
 ## 0.11.22 — 2026-09-14
 
 ### O painel dizia "Iniciando" com o personagem caçando

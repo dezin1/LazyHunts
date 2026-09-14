@@ -66,6 +66,15 @@
     voltaEm: 0, // quando fechou a última volta
     mortesNaVolta: 0,
     mortesNaVoltaAnterior: null, // null = ainda não fechou nenhuma volta
+    // v0.11.33 — tiles DISTINTOS andados desde a última morte, e o perfil
+    // aprendido da caçada atual. Ver o bloco "PERFIL DE TILES" abaixo.
+    tilesDesdeMorte: new Set(),
+    perfilCenario: null, // scenarioId cujo perfil está carregado
+    perfilTiles: [], // tiles distintos entre mortes, nesta caçada
+    perfilLotes: [], // intervalo entre LOTES de nascimento, nesta caçada
+    perfilSujo: false, // tem amostra nova pra gravar
+    ultimoLoteEm: 0, // início do último lote de nascimento
+    loteArmado: true, // um disparo por lote, não um por mensagem
   };
 
   // v0.11.18 — FICHA DO PERSONAGEM pelo tipo 77.
@@ -106,6 +115,213 @@
 
   function fichaFresca() {
     return ficha.em > 0 && Date.now() - ficha.em < FICHA_VALIDADE_MS;
+  }
+
+  // v0.11.31 — QUEM É ESTE PERSONAGEM, PELO PROTOCOLO.
+  //
+  // O tipo 103 (`{playerId}`) chega no login e diz o meu id; o tipo 15 anuncia
+  // criaturas e jogadores, inclusive eu — e aí `creature.id === playerId`
+  // fecha nome, level e vocação sem depender de o HUD ter montado.
+  // Confirmado nas duas capturas de 14/09:
+  //   [103,{"playerId":1124085}]
+  //   [15,{"creature":{"id":1124085,"kind":"player","name":"Kina Zemsta",
+  //        "level":143,"vocation":"knight",...}}]
+  //
+  // ⚠️ Isto é ZERADO em toda troca de personagem e toda queda de socket. Um
+  // nome de personagem velho é pior que nenhum: ele decide atribuição de
+  // Telegram, rodízio e quem é líder da party.
+  const eu = { id: null, nome: null, vocacao: null, level: null, em: 0 };
+
+  function euZerar() {
+    eu.id = null;
+    eu.nome = null;
+    eu.vocacao = null;
+    eu.level = null;
+    eu.em = 0;
+  }
+
+  // v0.11.31 — MODELO DA BOLSA, pra capacidade restante pelo protocolo.
+  //
+  // O servidor NÃO manda a capacidade restante. O `capacity` do tipo 77 é o
+  // MÁXIMO: constante em 976 amostras de três capturas (310150 nas duas do
+  // Kina, 256015 na do Naj), enquanto o personagem caçava e enchia a bag.
+  //
+  // O que dá pra fazer é reconstruir o peso carregado:
+  //   - tipo 74 = inventário inteiro no login (`slots` da bag, `satchel`,
+  //     `equipment` e `gold`), com `weight` POR UNIDADE em cada item;
+  //   - tipo 55 = cada mudança de slot, já com o estado NOVO daquele slot
+  //     (`{container,index,item}` pra bag/satchel, `{container,slot,item}` pra
+  //     equipamento, `item:null` quando esvaziou — 67 casos confirmados).
+  // Então: restante = (capacity − Σ peso×quantidade) / 1000.
+  //
+  // ⚠️ ISTO É DERIVADO, NÃO LIDO — e por isso entra em modo de CONFERÊNCIA:
+  // enquanto o HUD estiver legível, quem manda continua sendo o DOM, e o
+  // modelo só é usado depois de bater com ele três vezes seguidas. Se
+  // divergir, ele se marca como não-confiável e avisa no log, com os dois
+  // números. É o único jeito honesto de validar uma conta que eu não consigo
+  // fazer offline: nas capturas não existe o valor do HUD pra comparar.
+  const bolsa = {
+    base: false, // o tipo 74 chegou nesta sessão?
+    backpack: [],
+    satchel: [],
+    equipamento: {},
+    gold: null,
+    em: 0,
+    conferido: false, // já bateu com o DOM o suficiente pra ser usado sozinho
+    acertos: 0,
+    erros: 0,
+    ultimaDiferenca: null,
+    avisou: false,
+    // v0.11.32 — itens que passaram pelo inventário sem peso conhecido.
+    // Mapa itemId -> nome, pra divergência virar diagnóstico.
+    semPeso: new Map(),
+  };
+
+  const BOLSA_ACERTOS_PRA_CONFIAR = 3;
+  const BOLSA_TOLERANCIA = 0.05; // em unidades de capacidade (50 de peso cru)
+
+  function bolsaZerar() {
+    bolsa.base = false;
+    bolsa.backpack = [];
+    bolsa.satchel = [];
+    bolsa.equipamento = {};
+    bolsa.gold = null;
+    bolsa.em = 0;
+    bolsa.conferido = false;
+    bolsa.acertos = 0;
+    bolsa.erros = 0;
+    bolsa.ultimaDiferenca = null;
+    bolsa.avisou = false;
+    bolsa.semPeso.clear();
+  }
+
+  // v0.11.32 — CATÁLOGO DE PESOS (tipo 26), a rede de segurança do cálculo.
+  //
+  // Medido nas sete capturas: dos 4.087 itens que passam pelo protocolo, 4.085
+  // trazem `weight` na própria mensagem — e nos caminhos que alimentam o peso
+  // carregado (74, 55, 60, 62) a cobertura é 806 de 806. Ou seja, o catálogo
+  // não é necessário pro caso normal. Ele existe pro caso ANORMAL: um item
+  // chegar sem peso e o somatório silenciosamente perder alguns gramas.
+  //
+  // Escuta só o tipo 26, não o 66: medido, o 66 é SUBCONJUNTO estrito do 26
+  // (775 itens contra 836; zero itemIds exclusivos do 66). Ouvir os dois seria
+  // parsear 109 KB a mais por login sem ganhar um item.
+  const catalogoPesos = new Map(); // itemId -> peso por unidade
+
+  function catalogoLerItens(p) {
+    if (!p || !Array.isArray(p.items)) return;
+    for (const it of p.items) {
+      if (it && it.itemId != null && typeof it.weight === "number") {
+        catalogoPesos.set(it.itemId, it.weight);
+      }
+    }
+  }
+
+  // Peso de um slot. Três fontes, nessa ordem: o que veio na mensagem, o
+  // catálogo, e "não sei".
+  //
+  // ⚠️ "Não sei" vira ZERO no somatório de propósito — inventar um peso seria
+  // pior. Mas não vira SILÊNCIO: o item fica registrado em `bolsa.semPeso`, e
+  // é isso que transforma uma divergência de capacidade em diagnóstico ("o
+  // modelo errou 3.2 e tem um 'experience scroll' sem peso") em vez de
+  // mistério. Se a conferência bater MESMO com o desconhecido, então zero era
+  // o peso certo — e o caso se resolve sozinho.
+  function pesoDoItem(item) {
+    if (!item) return 0;
+    const qtd = typeof item.count === "number" && item.count > 0 ? item.count : 1;
+    if (typeof item.weight === "number") return item.weight * qtd;
+    if (item.itemId != null && catalogoPesos.has(item.itemId)) {
+      return catalogoPesos.get(item.itemId) * qtd;
+    }
+    if (item.itemId != null) bolsa.semPeso.set(item.itemId, item.name || `#${item.itemId}`);
+    return 0;
+  }
+
+  // Tipo 74 — inventário inteiro. É o único jeito de ter uma base: sem ele o
+  // modelo devolve null e a leitura continua no DOM, como antes.
+  function bolsaLerSnapshot(p) {
+    if (!p || typeof p !== "object") return;
+    bolsa.backpack = Array.isArray(p.slots) ? p.slots.slice() : [];
+    bolsa.satchel = Array.isArray(p.satchel) ? p.satchel.slice() : [];
+    bolsa.equipamento = p.equipment && typeof p.equipment === "object" ? { ...p.equipment } : {};
+    if (typeof p.gold === "number") bolsa.gold = p.gold;
+    bolsa.base = true;
+    bolsa.em = Date.now();
+    // Base nova = conferência nova. O snapshot pode ter chegado depois de uma
+    // troca de personagem, e os acertos do anterior não valem pra este.
+    bolsa.conferido = false;
+    bolsa.acertos = 0;
+    bolsa.erros = 0;
+  }
+
+  // Tipo 55 — o estado NOVO de cada slot que mudou.
+  function bolsaLerMudancas(p) {
+    if (!p || typeof p !== "object") return;
+    if (typeof p.gold === "number") bolsa.gold = p.gold;
+    if (!bolsa.base || !Array.isArray(p.changes)) return;
+    for (const c of p.changes) {
+      if (!c || typeof c !== "object") continue;
+      const item = c.item || null;
+      if (c.container === "equipment") {
+        if (typeof c.slot === "string") bolsa.equipamento[c.slot] = item;
+        continue;
+      }
+      const lista = c.container === "satchel" ? bolsa.satchel : c.container === "backpack" ? bolsa.backpack : null;
+      if (!lista || typeof c.index !== "number" || c.index < 0) continue;
+      lista[c.index] = item;
+    }
+    bolsa.em = Date.now();
+  }
+
+  function pesoCarregado() {
+    if (!bolsa.base) return null;
+    let total = 0;
+    for (const it of bolsa.backpack) total += pesoDoItem(it);
+    for (const it of bolsa.satchel) total += pesoDoItem(it);
+    for (const k of Object.keys(bolsa.equipamento)) total += pesoDoItem(bolsa.equipamento[k]);
+    return total;
+  }
+
+  // true/false/null — `null` é "não sei", e aí o DOM decide.
+  function capacidadeRestantePeloProtocolo() {
+    if (!bolsa.base) return null;
+    if (!fichaFresca() || typeof ficha.capacidadeMaxima !== "number") return null;
+    const peso = pesoCarregado();
+    if (peso === null) return null;
+    return (ficha.capacidadeMaxima - peso) / 1000;
+  }
+
+  // v0.16.0 do método, não do app: um número derivado só vira fonte depois de
+  // provar que bate com o número que já funciona.
+  function conferirCapacidade(doDom, doProtocolo) {
+    if (typeof doDom !== "number" || typeof doProtocolo !== "number") return;
+    const dif = Math.abs(doDom - doProtocolo);
+    bolsa.ultimaDiferenca = dif;
+    if (dif <= BOLSA_TOLERANCIA) {
+      bolsa.acertos++;
+      if (bolsa.acertos >= BOLSA_ACERTOS_PRA_CONFIAR) bolsa.conferido = true;
+      return;
+    }
+    bolsa.erros++;
+    bolsa.acertos = 0;
+    bolsa.conferido = false;
+    if (!bolsa.avisou) {
+      bolsa.avisou = true;
+      // v0.11.32 — com os itens sem peso no aviso, uma divergência deixa de
+      // ser mistério: ou o culpado está nomeado aqui, ou o problema é outro
+      // (o palpite seguinte é o tipo 62, container aberto, que ficou de fora
+      // justamente por eu não ter certeza do que ele é).
+      const desconhecidos = [...bolsa.semPeso.values()];
+      log(
+        `Capacidade pelo protocolo não bateu com a do jogo (${doProtocolo.toFixed(2)} contra ${doDom.toFixed(2)}, ` +
+          `diferença de ${dif.toFixed(2)}) — sigo usando a do jogo.` +
+          (desconhecidos.length
+            ? ` Passaram pela bag ${desconhecidos.length} ${desconhecidos.length === 1 ? "item sem peso conhecido" : "itens sem peso conhecido"}: ${desconhecidos.slice(0, 5).join(", ")}.`
+            : " Nenhum item passou sem peso, então a diferença vem de outro lugar.") +
+          " Isso é só um aviso de conferência, não muda o funcionamento.",
+        true
+      );
+    }
   }
 
   // v0.11.16 — último convite de party visto no protocolo (tipo 71).
@@ -212,6 +428,9 @@
   // criatura — resolve em memória. Os tiers vêm na ordem do jogo
   // (Cautious → Bold → Reckless), então "mais difícil" é o último.
   const guild = {
+    // v0.11.26 — qual objetivo já teve aviso de "não sei as criaturas", pra o
+    // alerta sair uma vez por objetivo e não a cada tick de 4s.
+    avisoMapaEm: null,
     expedicoes: null, // { periodKey, endsAtMs, entries: [...] }
     cacadas: [], // catálogo do tipo 42
     objetivoEscolhido: null, // objectiveId em que o bot se comprometeu
@@ -244,6 +463,11 @@
     mundo.scenarioId = typeof p.scenarioId === "string" ? p.scenarioId : null;
     mundo.ambience = typeof p.ambience === "string" ? p.ambience : null;
     mundo.em = Date.now();
+    // v0.11.33 — o perfil de tiles é POR CAÇADA, e o `scenarioId` é a chave
+    // certa: `troll-hunt` é o mesmo lugar em troll-hunt-708, -715 e -721.
+    // Trocar aqui (e não no zerarDeteccaoDeSpawn) é o que faz o aprendizado
+    // sobreviver à renovação de spawn, que é justamente quando ele é preciso.
+    usarPerfilDoCenario(mundo.scenarioId);
     // v0.11.22 — o nome da caçada sai daqui de graça (cenário × catálogo do
     // tipo 42). Manter o cache em dia faz o rótulo do painel dizer QUAL
     // caçada, e não só "Caçando".
@@ -293,7 +517,90 @@
   // Criaturas-alvo de cada objetivo. O tipo 33 traz label/quota/progress mas
   // NÃO as criaturas — isso só existe no painel, no title dos botões
   // ("Mostrar as caçadas onde Skeleton aparece"). Casa pelo rótulo da linha.
-  function criaturasDoObjetivo(label) {
+  // v0.11.26 — MAPA "objetivo → criaturas", COM CACHE EM DISCO.
+  //
+  // Este era o elo fraco da auto expedição, e ele falhava calado: o tipo 33 dá
+  // progresso e quota exatos, o tipo 42 dá qual caçada mata cada criatura —
+  // mas QUAIS criaturas contam para "Restless Dead" só existe no painel de
+  // expedição do jogo, no `title` dos botões. Painel fechado = lista vazia =
+  // nenhuma caçada escolhida = a feature não fazia nada e não dizia nada.
+  //
+  // E não dá pra derivar do protocolo: o `familyId` é "restless-dead", que não
+  // é criatura nem id de caçada — é uma CATEGORIA que agrupa Skeleton, Ghoul,
+  // Mummy. Conferido contra o catálogo real: "Trolls" e "Amazons & Valkyries"
+  // até dariam por semelhança de nome, "Restless Dead" não dá de jeito nenhum.
+  // Então o painel continua sendo a fonte — mas basta lê-lo UMA vez.
+  const EXPED_MAPA_KEY = "hm_exped_mapa_v1";
+
+  function carregarMapaExpedicao() {
+    try {
+      return JSON.parse(localStorage.getItem(EXPED_MAPA_KEY) || "{}") || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function salvarMapaExpedicao(label, criaturas) {
+    if (!label || !criaturas || !criaturas.length) return;
+    try {
+      const mapa = carregarMapaExpedicao();
+      mapa[String(label).trim()] = criaturas;
+      localStorage.setItem(EXPED_MAPA_KEY, JSON.stringify(mapa));
+    } catch (e) {}
+  }
+
+  // v0.11.28 — TERCEIRA FONTE: o `familyId` casado com o `bestiaryId` do
+  // catálogo.
+  //
+  // Medido na expedição real do André: `trolls` → bestiaryId `troll` (Troll,
+  // em Troll Hills) e `amazon-camp` → `amazon` (Amazon, em Amazon Camp).
+  // `restless-dead` NÃO casa, porque é uma categoria que agrupa várias
+  // criaturas — por isso isto é complemento do painel, nunca substituto.
+  //
+  // Só aceita casamento EXATO com um bestiaryId que existe no catálogo. Sem
+  // parecido, sem "começa com": errar aqui manda o personagem caçar a coisa
+  // errada por horas.
+  //
+  // ⚠️ Limite honesto: quando vem daqui, a lista pode estar INCOMPLETA (o
+  // painel talvez conte Swamp Troll também). A caçada escolhida continua
+  // válida, só pode não ser a melhor. Por isso o painel diz de onde veio.
+  function criaturasPorFamilyId(familyId) {
+    const f = String(familyId || "").trim();
+    if (!f || !Array.isArray(guild.cacadas) || !guild.cacadas.length) return [];
+    const base = f.split("-")[0];
+    const variantes = new Set([f, f.replace(/-/g, ""), f.replace(/s$/, ""), base, base.replace(/s$/, "")]);
+    const nomes = new Set();
+    for (const h of guild.cacadas) {
+      for (const m of h.monsters || []) {
+        if (m && m.bestiaryId && variantes.has(m.bestiaryId) && m.name) nomes.add(m.name);
+      }
+    }
+    return [...nomes];
+  }
+
+  function criaturasDoObjetivo(label, familyId) {
+    const doDom = criaturasDoObjetivoNoDom(label);
+    if (doDom.length) {
+      salvarMapaExpedicao(label, doDom);
+      return doDom;
+    }
+    const mapa = carregarMapaExpedicao();
+    const guardado = mapa[String(label || "").trim()];
+    if (Array.isArray(guardado) && guardado.length) return guardado;
+    return criaturasPorFamilyId(familyId);
+  }
+
+  // De onde veio a lista — só pra o painel poder ser honesto sobre isso.
+  function fonteDasCriaturas(label, familyId) {
+    if (criaturasDoObjetivoNoDom(label).length) return "painel";
+    const mapa = carregarMapaExpedicao();
+    const g = mapa[String(label || "").trim()];
+    if (Array.isArray(g) && g.length) return "painel (guardado)";
+    if (criaturasPorFamilyId(familyId).length) return "catálogo";
+    return null;
+  }
+
+  function criaturasDoObjetivoNoDom(label) {
     const tracker = document.querySelector(SEL.expeditionTracker);
     if (!tracker) return [];
     for (const row of tracker.querySelectorAll(".expedition-tracker-row")) {
@@ -312,13 +619,46 @@
   // Objetivo pendente mais PERTO DE TERMINAR (decisão do André). No começo do
   // dia todos estão zerados e empatados — aí o desempate é não trocar à toa:
   // se a caçada atual já mata alguma criatura-alvo, fica nela.
+  // v0.11.27 — trava entre trocas motivadas por expedição, pra não virar
+  // carrossel se dois objetivos empatarem.
+  let expedicaoUltimaTrocaEm = 0;
+  const EXPEDICAO_TROCA_MIN_MS = 10 * 60000;
+
+  // A caçada `nome` mata alguma criatura de ALGUM objetivo ainda pendente?
+  function cacadaServeAlgumObjetivo(nome) {
+    const ex = guild.expedicoes;
+    if (!ex || !Array.isArray(ex.entries) || !nome) return false;
+    const hunt = guild.cacadas.find((h) => h.name === nome);
+    if (!hunt) return false;
+    const monstros = (hunt.monsters || []).map((m) => m.name);
+    return ex.entries.some((e) => {
+      if (Number(e.progress) >= Number(e.quota)) return false;
+      return criaturasDoObjetivo(e.label, e.familyId).some((c) => monstros.includes(c));
+    });
+  }
+
+  // Devolve `{alvo, escolha, atual}` quando vale trocar de caçada AGORA, ou
+  // null. Null é a resposta na dúvida: sem objetivo pendente, sem mapa de
+  // criaturas, caçada atual servindo, ou trava de tempo ativa.
+  function avaliarTrocaPorExpedicao(cfg) {
+    if (Date.now() - expedicaoUltimaTrocaEm < EXPEDICAO_TROCA_MIN_MS) return null;
+    const atual = currentHuntNameCache || cfg.huntName;
+    if (!atual) return null;
+    if (cacadaServeAlgumObjetivo(atual)) return null; // já serve: fica
+    const alvo = escolherObjetivoDaExpedicao(atual);
+    if (!alvo || !alvo.criaturas || !alvo.criaturas.length) return null;
+    const escolha = cacadaParaCriaturas(alvo.criaturas);
+    if (!escolha || escolha.nome === atual) return null;
+    return { alvo, escolha, atual };
+  }
+
   function escolherObjetivoDaExpedicao(cacadaAtual) {
     const ex = guild.expedicoes;
     if (!ex || !Array.isArray(ex.entries)) return null;
     const pendentes = ex.entries.filter((e) => Number(e.progress) < Number(e.quota));
     if (!pendentes.length) return null;
 
-    const comCriaturas = pendentes.map((e) => ({ ...e, criaturas: criaturasDoObjetivo(e.label) }));
+    const comCriaturas = pendentes.map((e) => ({ ...e, criaturas: criaturasDoObjetivo(e.label, e.familyId) }));
 
     // Desempate: a caçada em que já estamos mata alguém da lista?
     if (cacadaAtual) {
@@ -351,6 +691,63 @@
       // André: "todas as expedições devem ser executadas no nível mais
       // difícil". Os tiers vêm na ordem do jogo, então é o último.
       tier: tiers.length ? tiers[tiers.length - 1].name : null,
+    };
+  }
+
+  // v0.11.30 — UMA ÚNICA FONTE DE VERDADE PRA "ONDE ESTE PERSONAGEM DEVE
+  // CAÇAR AGORA".
+  //
+  // Bug reportado pelo André em 14/09: "ele acabou de sair da expedição pq
+  // estava sem bicho na tela. não continuou na expedição. acabou voltando
+  // para a caçada principal" — e, logo depois, "nem considera mais a
+  // expedição depois que saiu".
+  //
+  // A causa era arquitetural, não um `if` errado: a decisão de expedição
+  // morava SÓ no trecho "não está caçando" do monitor. Todos os outros
+  // caminhos que reentram numa caçada — renovação por spawn seco, retorno
+  // depois de vender — tinham cada um a sua própria regra, e as duas
+  // apontavam pra `cfg.huntName` (a caçada configurada no menu). Resultado:
+  // qualquer saída durante a expedição jogava o personagem de volta na
+  // caçada principal, e de lá ele não voltava mais, porque a troca no meio
+  // da caçada (`avaliarTrocaPorExpedicao`) tem trava de 10min e só dispara
+  // quando a caçada atual não serve pra NENHUM objetivo.
+  //
+  // Agora existe um lugar só que responde "qual caçada e qual tier", e os
+  // três caminhos perguntam pra ele. Enquanto houver objetivo pendente, a
+  // resposta é a caçada da expedição no tier mais difícil; quando todos
+  // terminarem, volta a ser a caçada configurada. É exatamente o que o
+  // André pediu: "se está fazendo expedição tem que continuar nela, só
+  // desconsidera quando finalizar todas".
+  function alvoDeCacada(cfg, cacadaAtual) {
+    const atual = cacadaAtual || currentHuntNameCache || cfg.huntName;
+    const padrao = {
+      nome: cfg.huntName || atual,
+      pullLevel: cfg.pullLevel,
+      expedicao: false,
+      objetivo: null,
+    };
+    if (!cfg.expeditionEnabled || cfg.huntMode === "group" || !guild.cacadas.length) return padrao;
+
+    const alvo = escolherObjetivoDaExpedicao(atual);
+    if (!alvo || !alvo.criaturas || !alvo.criaturas.length) return padrao;
+
+    // Se a caçada em que já estamos mata alguma criatura do objetivo, ela é
+    // a resposta — mesmo que outra do catálogo mate mais. Trocar de mapa a
+    // cada renovação de spawn seria carrossel, não expedição.
+    const huntAtual = atual ? guild.cacadas.find((h) => h.name === atual) : null;
+    const monstrosAtuais = huntAtual ? (huntAtual.monsters || []).map((m) => m.name) : [];
+    if (alvo.criaturas.some((c) => monstrosAtuais.includes(c))) {
+      return { nome: atual, pullLevel: TIER_MAIS_DIFICIL, expedicao: true, objetivo: alvo };
+    }
+
+    const escolha = cacadaParaCriaturas(alvo.criaturas);
+    if (!escolha) return padrao;
+    return {
+      nome: escolha.nome,
+      pullLevel: TIER_MAIS_DIFICIL,
+      expedicao: true,
+      objetivo: alvo,
+      tier: escolha.tier,
     };
   }
 
@@ -565,6 +962,29 @@
         if (spawnWatch.intervalos.length > 80) spawnWatch.intervalos.shift();
       }
     }
+    // v0.11.33 — O RITMO QUE IMPORTA É O DOS LOTES, NÃO O DOS BICHOS.
+    //
+    // Medido nas capturas: o servidor nasce criatura em LOTE — troll-hunt fez
+    // 80 nascimentos em 8 lotes de ~8 bichos, tortoise-hunt 66 em 7 lotes de
+    // ~10. Dentro de um lote o intervalo é de milissegundos; entre lotes é de
+    // 7s (troll) ou 14s (tortoise). Medir bicho-a-bicho, como era antes, dava
+    // duas saídas igualmente inúteis: com o filtro de 1s, poucas amostras (o
+    // painel do André ficou em "aprendendo o ritmo 0/8" com a caçada rodando);
+    // sem o filtro, mediana zero.
+    //
+    // Entre LOTES, cada amostra vale, e 4 delas já descrevem a caçada. E é
+    // esse o número que separa: no teste em que o André achou que demorou, o
+    // buraco entre lotes foi de 75s numa caçada cujo normal é 7s.
+    const novoLote = !spawnWatch.ultimoSpawnEm || agora - spawnWatch.ultimoSpawnEm > LOTE_JANELA_MS;
+    if (novoLote) {
+      if (spawnWatch.ultimoLoteEm && spawnWatch.perfilCenario) {
+        const dtLote = agora - spawnWatch.ultimoLoteEm;
+        if (dtLote > 0 && dtLote < LOTE_MAX_MS) empilharAmostra(spawnWatch.perfilLotes, dtLote);
+      }
+      spawnWatch.ultimoLoteEm = agora;
+      spawnWatch.loteArmado = true; // nasceu lote novo: o gatilho rearma
+    }
+
     spawnWatch.ultimoSpawnEm = agora;
     spawnWatch.vivos.set(id, nome);
   }
@@ -580,6 +1000,170 @@
   const VOLTA_MIN_TILES = 25; // andou o suficiente pra ser uma volta, não um passo
   const VOLTA_MIN_MS = 30000; // e faz tempo que passou ali
   const RASTRO_MAX = 2000;
+
+  // ---------- v0.11.33 — PERFIL DE TILES POR CAÇADA ----------
+  //
+  // André: "caçada é um respawn diferente, um lugar diferente, bichos
+  // diferentes, tempos diferentes. não poderia ser padrão, isso precisa ser
+  // inteligente de alguma forma. todas as caçadas poderiam ser mapeadas para
+  // saber onde são os spots."
+  //
+  // Ele está certo sobre o problema, e a medição corrigiu as DUAS hipóteses
+  // que a gente tinha pra solução:
+  //
+  //  1. LIMIAR FIXO NÃO SERVE. Medido nas capturas, tiles distintos andados
+  //     entre mortes: Troll Hills p90 = 9 e 10 (duas capturas), Tortoise Shore
+  //     p90 = 2 e 4. A mesma caçada dá o mesmo número com personagens e dias
+  //     diferentes; caçadas diferentes dão números 4x distantes. Um "40 tiles"
+  //     chapado seria frouxo numa e apertado na outra.
+  //
+  //  2. MAPEAR O TAMANHO DO MAPA TAMBÉM NÃO SERVE — e é o contrário do que
+  //     eu teria chutado. O tipo 88 entrega o terreno com `blocked` por tile,
+  //     então dá pra medir a área andável: Troll Hills tem 1.281 tiles
+  //     andáveis, Tortoise Shore tem 4.159. Mas é a caçada PEQUENA que tem o
+  //     p90 MAIOR (9-10 contra 2-4). Ou seja, a densidade de bicho manda mais
+  //     que o tamanho do mapa, e um limiar em "% do mapa" erraria feio. Ainda
+  //     por cima o tipo 88 custa ~3 MB por mensagem — 9 MB numa captura de 3
+  //     minutos. Não vale parsear pra chegar numa resposta errada.
+  //
+  // O que funciona é APRENDER, caçada por caçada, do jeito que o ritmo de
+  // spawn já é aprendido. A chave é o `scenarioId` do tipo 54 (`troll-hunt`,
+  // `tortoise-hunt`) — estável entre instâncias (troll-hunt-708, -715, -721
+  // são a mesma caçada), custa 1 KB e já é escutado. É o "mapear as caçadas"
+  // que o André pediu, só que medido no jogo dele em vez de escrito à mão.
+  //
+  // O perfil fica em disco: sair e entrar pra renovar o spawn cria instância
+  // nova, e sem persistir o detector recomeçaria do zero justamente depois de
+  // cada renovação.
+  const SPAWN_PERFIL_KEY = "hm_spawn_perfil_v1";
+  const PERFIL_MAX = 200; // janela móvel: a caçada muda de tier, o perfil acompanha
+
+  // Tiles: uma amostra por morte, então dá pra exigir amostra grande.
+  const TILES_MIN_AMOSTRAS = 30;
+  const TILES_FATOR = 8;
+  const TILES_PISO = 25;
+
+  // Lotes: uma amostra a cada 7-20s, então a exigência é menor — e precisa
+  // ser, senão o critério não existe nos primeiros minutos.
+  const LOTE_JANELA_MS = 2000; // nascimentos a menos disso são o MESMO lote
+  const LOTE_MIN_AMOSTRAS = 4;
+  const LOTE_FATOR = 3;
+  const LOTE_PISO_MS = 20000;
+  const LOTE_MAX_MS = 10 * 60000; // intervalo maior que isso não ensina nada
+
+  function carregarPerfis() {
+    try {
+      return JSON.parse(localStorage.getItem(SPAWN_PERFIL_KEY) || "{}") || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  // v0.11.34 — gravação também por TEMPO, não só por contagem.
+  //
+  // Antes o perfil só ia pro disco a cada 20 mortes ou ao trocar de caçada.
+  // Quem fechasse o app no meio de uma caçada perdia o que estava aprendendo —
+  // inclusive as amostras de LOTE, que são poucas e valiosas (4 já calibram).
+  // Agora o tick também chama isto, e ele grava no máximo uma vez a cada 30s.
+  let perfilGravadoEm = 0;
+  const PERFIL_GRAVA_A_CADA_MS = 30000;
+
+  function gravarPerfilSePassouTempo() {
+    if (!spawnWatch.perfilSujo) return;
+    // `perfilGravadoEm === 0` é "nunca gravou nesta sessão" — e aí grava
+    // AGORA. Tratar isso como um timestamp velho fazia a primeira gravação
+    // esperar 30s, justamente a janela em que o app acabou de abrir e é mais
+    // provável ser fechado.
+    if (perfilGravadoEm && Date.now() - perfilGravadoEm < PERFIL_GRAVA_A_CADA_MS) return;
+    gravarPerfil();
+  }
+
+  function gravarPerfil() {
+    if (!spawnWatch.perfilSujo || !spawnWatch.perfilCenario) return;
+    perfilGravadoEm = Date.now();
+    try {
+      const todos = carregarPerfis();
+      todos[spawnWatch.perfilCenario] = {
+        tiles: spawnWatch.perfilTiles.slice(-PERFIL_MAX),
+        lotes: spawnWatch.perfilLotes.slice(-PERFIL_MAX),
+        em: Date.now(),
+      };
+      localStorage.setItem(SPAWN_PERFIL_KEY, JSON.stringify(todos));
+      spawnWatch.perfilSujo = false;
+    } catch (e) {}
+  }
+
+  // Troca o perfil carregado quando a caçada muda. Gravar ANTES de trocar é o
+  // que evita perder as amostras da caçada que está saindo.
+  function usarPerfilDoCenario(scenarioId) {
+    const alvo = scenarioId || null;
+    if (spawnWatch.perfilCenario === alvo) return;
+    gravarPerfil();
+    spawnWatch.perfilCenario = alvo;
+    spawnWatch.perfilTiles = [];
+    spawnWatch.perfilLotes = [];
+    spawnWatch.perfilSujo = false;
+    spawnWatch.ultimoLoteEm = 0;
+    spawnWatch.loteArmado = true;
+    if (!alvo) return;
+    const g = carregarPerfis()[alvo];
+    if (g) {
+      if (Array.isArray(g.tiles)) spawnWatch.perfilTiles = g.tiles.slice(-PERFIL_MAX);
+      if (Array.isArray(g.lotes)) spawnWatch.perfilLotes = g.lotes.slice(-PERFIL_MAX);
+    }
+  }
+
+  function empilharAmostra(lista, valor) {
+    lista.push(valor);
+    if (lista.length > PERFIL_MAX) lista.shift();
+    spawnWatch.perfilSujo = true;
+  }
+
+  // Registra "andei N tiles até esta morte" e reinicia a contagem.
+  function registrarMorteNoPerfil() {
+    if (spawnWatch.perfilCenario) {
+      empilharAmostra(spawnWatch.perfilTiles, spawnWatch.tilesDesdeMorte.size);
+      // Grava de vez em quando, não a cada morte: em caçada boa isso seria uma
+      // escrita em disco a cada dois segundos.
+      if (spawnWatch.perfilTiles.length % 20 === 0) gravarPerfil();
+    }
+    spawnWatch.tilesDesdeMorte.clear();
+  }
+
+  // p90, não mediana. A mediana de tiles entre mortes é 0 ou 1 em TODAS as
+  // capturas (bicho morre em cima do outro), então ela não descreve "andar
+  // procurando"; o p90 descreve.
+  function percentil90(xs, minimo) {
+    if (!xs || xs.length < minimo) return null;
+    const ord = xs.slice().sort((a, b) => a - b);
+    return ord[Math.floor(ord.length * 0.9)];
+  }
+
+  function tilesTipicos() {
+    return percentil90(spawnWatch.perfilTiles, TILES_MIN_AMOSTRAS);
+  }
+
+  function loteTipicoMs() {
+    return percentil90(spawnWatch.perfilLotes, LOTE_MIN_AMOSTRAS);
+  }
+
+  // Limiar de tiles pra esta caçada, ou null enquanto não houver amostra.
+  function limiarDeTiles() {
+    const p90 = tilesTipicos();
+    if (p90 === null) return null;
+    const fator = Math.max(2, Number(spawnCfg.tilesFactor) || TILES_FATOR);
+    const piso = Math.max(10, Number(spawnCfg.tilesFloor) || TILES_PISO);
+    return Math.max(piso, p90 * fator);
+  }
+
+  // Limiar de silêncio entre lotes, em ms, ou null.
+  function limiarDeLote() {
+    const p90 = loteTipicoMs();
+    if (p90 === null) return null;
+    const fator = Math.max(2, Number(spawnCfg.batchFactor) || LOTE_FATOR);
+    const piso = Math.max(10000, (Number(spawnCfg.batchFloorSeconds) || 0) * 1000 || LOTE_PISO_MS);
+    return Math.max(piso, p90 * fator);
+  }
 
   function registrarPasso(pos) {
     if (!pos || pos.x == null || pos.y == null) return;
@@ -600,6 +1184,9 @@
 
     spawnWatch.rastro.push({ chave, em: agora });
     if (spawnWatch.rastro.length > RASTRO_MAX) spawnWatch.rastro.shift();
+    // v0.11.33 — tiles DISTINTOS desde a última morte. Distintos, não passos:
+    // andar pra frente e pra trás no mesmo corredor não é "procurar bicho".
+    spawnWatch.tilesDesdeMorte.add(chave);
   }
 
   // Tipos que a automação escuta. Cada um aqui é uma dependência do
@@ -619,7 +1206,9 @@
   // v0.11.21 — entraram 9 (bestiary, pra contar mortes) e 92 (aviso do
   // sistema, que confirma a venda rápida e o desgaste de equipamento).
   // v0.11.22 — entrou 72 (party ao vivo: membros, vocação, stamina, líder).
-  const TIPOS_ESCUTADOS = new Set(["9", "15", "18", "21", "33", "41", "42", "51", "54", "55", "57", "60", "71", "72", "77", "92", "103"]);
+  // v0.11.31 — entrou o 74 (inventário inteiro no login). É a base sem a qual
+  // o peso carregado não existe; o 55 sozinho só diz o que MUDOU.
+  const TIPOS_ESCUTADOS = new Set(["9", "15", "18", "21", "33", "41", "42", "51", "54", "55", "57", "60", "26", "71", "72", "74", "77", "92", "103"]);
 
   function spawnLerMensagem(texto) {
     // Formato: [tipo, payload]. Filtra ANTES do JSON.parse — isto roda muito
@@ -652,17 +1241,51 @@
       // personagem ativo, o id se reencontra sozinho toda vez que entra numa
       // caçada, sem depender de ter visto o login.
       if (c.kind === "player" && c.id != null && c.name) {
+        // v0.11.31 — quando o 103 já disse o meu id, o casamento é por ID e
+        // não depende mais do DOM. É daqui que saem nome/vocação/level pelo
+        // protocolo (ver o bloco `eu`).
+        if (spawnWatch.meuId != null && c.id === spawnWatch.meuId) {
+          eu.id = c.id;
+          eu.nome = c.name;
+          if (typeof c.vocation === "string") eu.vocacao = c.vocation;
+          if (typeof c.level === "number") eu.level = c.level;
+          eu.em = Date.now();
+          return;
+        }
         const meuNome = getActiveCharacterName();
-        if (meuNome && c.name === meuNome) spawnWatch.meuId = c.id;
+        if (meuNome && c.name === meuNome) {
+          spawnWatch.meuId = c.id;
+          eu.id = c.id;
+          eu.nome = c.name;
+          if (typeof c.vocation === "string") eu.vocacao = c.vocation;
+          if (typeof c.level === "number") eu.level = c.level;
+          eu.em = Date.now();
+        }
       }
       return;
     }
     if (tipo === "18") {
-      if (p.id != null && spawnWatch.vivos.delete(p.id)) spawnWatch.mortesNaVolta++;
+      if (p.id != null && spawnWatch.vivos.delete(p.id)) {
+        spawnWatch.mortesNaVolta++;
+        registrarMorteNoPerfil();
+      }
       return;
     }
     if (tipo === "103") {
-      if (p.playerId != null) spawnWatch.meuId = p.playerId;
+      if (p.playerId != null) {
+        spawnWatch.meuId = p.playerId;
+        eu.id = p.playerId;
+      }
+      return;
+    }
+    if (tipo === "74") {
+      bolsaLerSnapshot(p);
+      return;
+    }
+    if (tipo === "26") {
+      // Chega UMA vez por login (~206 KB). Vira tabela de peso e nada mais —
+      // os campos de ataque/defesa/categoria são descartados de propósito.
+      catalogoLerItens(p);
       return;
     }
     if (tipo === "54") {
@@ -704,6 +1327,9 @@
       guildLerMensagem(tipo, p);
       return;
     }
+    // O tipo 55 serve duas coisas: o custo (débito de gold, na economia) e o
+    // peso carregado (modelo da bolsa). Os dois leem a MESMA mensagem.
+    if (tipo === "55") bolsaLerMudancas(p);
     economiaLerMensagem(tipo, p);
   }
 
@@ -954,7 +1580,15 @@
           if (estado === socketJogo.estado) return;
           socketJogo.estado = estado;
           if (estado === "aberto") socketJogo.abertoEm = Date.now();
-          if (estado === "fechado") socketJogo.fechadoEm = Date.now();
+          if (estado === "fechado") {
+            socketJogo.fechadoEm = Date.now();
+            // v0.11.31 — socket caiu: o inventário e a identidade que o
+            // protocolo tinha viraram foto velha. O 74 e o 103 chegam de novo
+            // na reconexão (confirmado nas capturas: os dois vêm no mesmo
+            // estouro de login, ~2s depois de abrir).
+            euZerar();
+            bolsaZerar();
+          }
         } catch (e) {}
       });
 
@@ -1601,6 +2235,13 @@
           lucroHora: horas > 0 ? Math.round(lucro / horas) : null,
           vendas: economia.vendas,
           goldVendido: economia.goldVendido,
+          // v0.11.24 — diagnóstico do próprio analisador. "Tudo zero" tem duas
+          // causas possíveis e indistinguíveis na tela: a sessão acabou de
+          // começar, ou ela está sendo zerada de novo a cada instante. Estes
+          // três números separam uma da outra.
+          sessaoIniciadaEm: economia.inicio,
+          mensagensDoProtocolo: spawnWatch.mensagens,
+          amostrasDeXp: economia.ultimoXp ? 1 : 0,
         };
       })(),
       itensSemPreco,
@@ -1748,6 +2389,49 @@
       // v0.11.8 — treino.
       autoRestartAfterOutage: cfg.autoRestartAfterOutage !== false,
       expeditionEnabled: !!cfg.expeditionEnabled,
+      // v0.11.26 — o painel precisa poder mostrar QUAIS objetivos já têm o
+      // mapa de criaturas. Sem isso, "ligado e parado" é indistinguível de
+      // "ligado e funcionando".
+      // v0.11.27 — o que o DOM realmente tem. Eu mandei o André "abrir o painel
+      // de expedição", mas pelas notas do projeto o `.expedition-tracker` é um
+      // elemento do HUD (some só sem guild), não um modal — então ele já devia
+      // ter sido lido. Em vez de chutar por que veio vazio, o painel passa a
+      // mostrar o que existe: se o elemento está na tela e quais rótulos ele
+      // traz. Com isso a diferença entre "não achei o elemento" e "achei mas o
+      // rótulo não bate" aparece na primeira olhada.
+      expedicaoTracker: (() => {
+        try {
+          const tracker = document.querySelector(SEL.expeditionTracker);
+          if (!tracker) return { presente: false, rotulos: [] };
+          const rotulos = [];
+          for (const row of tracker.querySelectorAll(".expedition-tracker-row")) {
+            const r = row.querySelector(".expedition-tracker-label");
+            const criaturas = [];
+            for (const b of row.querySelectorAll("button[title]")) {
+              const m = /Mostrar as caçadas onde (.+) aparece/.exec(b.getAttribute("title") || "");
+              if (m) criaturas.push(m[1].trim());
+            }
+            rotulos.push({ rotulo: r ? r.textContent.trim() : null, criaturas });
+          }
+          return { presente: true, rotulos };
+        } catch (err) {
+          return null;
+        }
+      })(),
+      expedicaoMapa: (() => {
+        try {
+          const ex = guild.expedicoes;
+          if (!ex || !Array.isArray(ex.entries)) return null;
+          const mapa = {};
+          for (const e of ex.entries) {
+            const c = criaturasDoObjetivo(e.label, e.familyId);
+            mapa[e.label] = c.length ? { criaturas: c, fonte: fonteDasCriaturas(e.label, e.familyId) } : null;
+          }
+          return mapa;
+        } catch (err) {
+          return null;
+        }
+      })(),
       expedicoes: guild.expedicoes
         ? {
             endsAtMs: guild.expedicoes.endsAtMs,
@@ -1786,6 +2470,17 @@
             tipicoMs: intervaloTipicoDeSpawn(),
             amostras: spawnWatch.intervalos.length,
             tilesNaVolta: spawnWatch.rastro.length,
+            // v0.11.33 — os dois perfis aprendidos DESTA caçada.
+            cacada: spawnWatch.perfilCenario,
+            tilesAndados: spawnWatch.tilesDesdeMorte.size,
+            tilesTipicos: tilesTipicos(),
+            tilesLimiar: limiarDeTiles(),
+            tilesAmostras: spawnWatch.perfilTiles.length,
+            tilesMinimo: TILES_MIN_AMOSTRAS,
+            loteTipicoMs: loteTipicoMs(),
+            loteLimiarMs: limiarDeLote(),
+            loteAmostras: spawnWatch.perfilLotes.length,
+            loteMinimo: LOTE_MIN_AMOSTRAS,
             mortesNaVoltaAnterior: spawnWatch.mortesNaVoltaAnterior,
             seguindoMeuId: spawnWatch.meuId != null,
           }
@@ -1839,6 +2534,22 @@
       // v0.9.16 — vocação + level pra lista de contas.
       characterVocation: getActiveCharacterVocation(),
       characterLevel: getActiveCharacterLevel(),
+      // v0.11.31 — o que o PROTOCOLO sabe deste personagem, separado do que o
+      // DOM mostra. Serve pra ver, no painel, quando a leitura por WebSocket
+      // está de pé e quando ela está cega.
+      protocolo: {
+        nome: eu.nome,
+        vocacao: eu.vocacao, // base ("druid"), não a promovida ("ED")
+        level: eu.level,
+        inventario: bolsa.base,
+        capacidade: capacidadeRestantePeloProtocolo(),
+        capacidadeConferida: bolsa.base ? bolsa.conferido : null,
+        capacidadeDiferenca: bolsa.ultimaDiferenca,
+        // v0.11.32 — quantos itens do catálogo de peso já chegaram, e quais
+        // itens passaram pela bag sem peso conhecido.
+        catalogoPesos: catalogoPesos.size,
+        itensSemPeso: [...bolsa.semPeso.values()],
+      },
       // v0.9.6 — auto convidar pra party.
       isPartyLeader: cfg.isPartyLeader,
       // v0.11.22 — o que VALE na decisão. Separado do checkbox de propósito:
@@ -2045,9 +2756,27 @@
 
   // ---------- leitura de estado do jogo ----------
 
+  // v0.11.31 — capacidade restante: DOM enquanto o DOM responder, protocolo
+  // quando ele não responder E o modelo já tiver provado que bate.
+  //
+  // A ordem é deliberadamente o contrário da stamina. Lá o protocolo é uma
+  // LEITURA (o servidor manda `staminaMs`) e vence na hora. Aqui o número é
+  // DERIVADO de um somatório de pesos, e errar pra mais faz o personagem
+  // caçar de bag cheia; errar pra menos faz ele ir vender a cada dois
+  // minutos. Um número calculado não pode entrar mandando num número que já
+  // funciona — ele entra provando.
+  //
+  // O buraco que isso fecha é real: antes de o HUD montar, esta leitura
+  // devolvia `null`, e null aqui é "não sei" — o ciclo de venda simplesmente
+  // não acontecia até a interface aparecer.
   function getCapacityRemaining() {
     const el = document.querySelector(SEL.capacityValue);
-    return el ? parseCapacity(el.textContent) : null;
+    const doDom = el ? parseCapacity(el.textContent) : null;
+    const doProtocolo = capacidadeRestantePeloProtocolo();
+    if (doDom !== null && doProtocolo !== null) conferirCapacidade(doDom, doProtocolo);
+    if (doDom !== null) return doDom;
+    if (doProtocolo !== null && bolsa.conferido) return doProtocolo;
+    return null;
   }
 
   function getStaminaRemainingMinutes() {
@@ -2115,7 +2844,16 @@
   // 4 contas mandou cada notificação do Telegram.
   function getActiveCharacterName() {
     const el = queryVisible(document, SEL.characterHeaderName);
-    return el ? el.textContent.trim() : null;
+    if (el) {
+      const texto = el.textContent.trim();
+      if (texto) return texto;
+    }
+    // v0.11.31 — o protocolo sabe disso antes de o HUD montar (tipo 103 dá o
+    // id, tipo 15 dá o nome desse id). Só entra quando o DOM está calado, e
+    // `eu` é zerado em toda troca de personagem e queda de socket — um nome
+    // velho aqui contaminaria atribuição de Telegram, rodízio e liderança de
+    // party, que é exatamente o tipo de erro que não aparece no log.
+    return eu.nome || null;
   }
 
   // v0.11.8 — a chave do `trainSkillByCharacter` tem que casar EXATAMENTE com
@@ -2331,9 +3069,35 @@
     return true;
   }
 
+  // v0.11.29 — "O TIER MAIS DIFÍCIL" NÃO PODE SER UM NOME.
+  //
+  // A expedição entrou no nível mais fácil. O motivo: o tier vinha do tipo 42
+  // como NOME ("Reckless") e era casado com o texto do botão. Se aquele tier
+  // não está disponível pro personagem naquela caçada, o nome não casa,
+  // `selectPullTier` devolve false, e o jogo segue com o botão que já estava
+  // marcado — o primeiro, o mais fácil. O aviso saía no log, mas a caçada
+  // começava errada do mesmo jeito.
+  //
+  // O André descreveu a regra certa na própria reclamação: "o nível maior
+  // DISPONÍVEL". Então a expedição pede o ÚLTIMO botão de tier que existe e
+  // está habilitado — independe de nome, de idioma e do que o personagem
+  // consegue ou não acessar.
+  const TIER_MAIS_DIFICIL = "__max__";
+
+  // Mesmo cuidado do botão de venda rápida (v0.9.17): "visível" não é
+  // "clicável". Um tier bloqueado por level continua no DOM.
+  function tierBloqueado(b) {
+    if (!b) return true;
+    if (b.disabled) return true;
+    if (b.getAttribute("aria-disabled") === "true") return true;
+    return /(^|\s)(disabled|is-disabled|locked|blocked)(\s|$)/.test(b.className || "");
+  }
+
   function findPullTier(win, pullLevel) {
-    const tiers = Array.from(win.querySelectorAll(SEL.huntTiers));
+    const todos = Array.from(win.querySelectorAll(SEL.huntTiers));
+    const tiers = todos.filter((b) => !tierBloqueado(b));
     if (!tiers.length) return null;
+    if (pullLevel === TIER_MAIS_DIFICIL) return tiers[tiers.length - 1];
     return (
       tiers.find((b) => b.textContent.trim().toLowerCase() === String(pullLevel || "").toLowerCase()) ||
       null
@@ -2344,7 +3108,7 @@
     const match = findPullTier(win, pullLevel);
     if (!match) return false;
     await humanClick(match);
-    return true;
+    return match.textContent.trim() || true;
   }
 
   // v0.9.10 — André: "vamos ver como que faz o convite de hunt em grupo".
@@ -2438,8 +3202,18 @@
 
     await waitFor(() => win.querySelector(SEL.huntTiers), 4000);
     const tierFound = await selectPullTier(win, pullLevel);
+    // v0.11.29 — dizer QUAL tier entrou, não só que entrou. Foi a falta disso
+    // que deixou "entrou no mais fácil" passar despercebido.
+    if (tierFound && typeof tierFound === "string") {
+      log(`Tier escolhido: ${tierFound}${pullLevel === TIER_MAIS_DIFICIL ? " (o mais difícil disponível)" : ""}.`);
+    }
     if (!tierFound) {
-      log(`Aviso: tier "${pullLevel}" não existe em "${huntName}" — segui com o tier padrão.`);
+      log(
+        pullLevel === TIER_MAIS_DIFICIL
+          ? `Aviso: não achei nenhum tier disponível em "${huntName}" — a caçada começou no que já estava marcado.`
+          : `Aviso: o tier "${pullLevel}" não está disponível em "${huntName}" — a caçada começou no que já estava marcado, que costuma ser o mais fácil.`,
+        true
+      );
     }
     await sleep(200);
 
@@ -2637,6 +3411,17 @@
   // saída. A trava `soldSinceArrivingInCity` garante que roda UMA vez por
   // ida à cidade — nada de ficar clicando "Venda rápida" a cada 4s.
   function isInCity() {
+    // v0.11.23 — o tipo 54 diz o cenário: `city-global` / `main-city`. O
+    // caminho de DOM confundia duas coisas diferentes — ele testava se o botão
+    // "Venda rápida" está na tela, ou seja "estou num lugar onde dá pra
+    // vender", e usava isso como "estou na cidade". Enquanto o HUD não monta,
+    // a resposta era `false` mesmo com o personagem parado na cidade.
+    if (mundo.instanceId) {
+      const naCidade = /^city/i.test(mundo.instanceId) || /city/i.test(mundo.scenarioId || "");
+      if (naCidade) return true;
+      // Cenário conhecido que NÃO é cidade: responde não, sem consultar o DOM.
+      if (emCacadaPeloProtocolo() === true) return false;
+    }
     return !isHunting() && !!queryVisible(document, SEL.quickSellTownBtn);
   }
 
@@ -2727,14 +3512,25 @@
     // v0.9.15 — a caçada alvo passa a ser a CONFIGURADA quando existe. Antes
     // usava só a caçada de antes de sair, então trocar a caçada no menu
     // lateral não tinha efeito nenhum: o ciclo voltava pra antiga pra sempre.
-    const targetName = cfg.huntName || huntBeforeLeaving;
+    //
+    // v0.11.30 — mas a configurada só ganha quando NÃO há expedição pendente.
+    // Este era um dos dois caminhos que jogavam o personagem de volta na
+    // caçada principal no meio de uma expedição: vendeu o loot, voltou pra
+    // caçada do menu, e a expedição ficava esperando os 10min da trava de
+    // troca pra talvez ser lembrada.
+    const alvo = alvoDeCacada(cfg, huntBeforeLeaving);
+    const targetName = alvo.nome || cfg.huntName || huntBeforeLeaving;
     updatePanelStatus("Iniciando caçada");
-    log(`Retomando caçada: ${targetName}...`);
-    await ensureHunting(cfg, targetName);
+    log(
+      alvo.expedicao
+        ? `Retomando a expedição: ${targetName} (objetivo "${alvo.objetivo.label}", ${alvo.objetivo.progress}/${alvo.objetivo.quota})...`
+        : `Retomando caçada: ${targetName}...`
+    );
+    await ensureHunting({ ...cfg, pullLevel: alvo.pullLevel }, targetName);
 
     saveState({ cycles: (loadState().cycles || 0) + 1 });
     if (stats) stats.cycles++;
-    updatePanelStatus("Caçando");
+    updatePanelStatus(alvo.expedicao ? "Caçando (expedição)" : "Caçando");
     log(`De volta caçando "${targetName}".`);
   }
 
@@ -3068,10 +3864,27 @@
           const alvo = escolherObjetivoDaExpedicao(currentHuntNameCache || cfg.huntName);
           if (alvo) {
             const escolha = cacadaParaCriaturas(alvo.criaturas);
+            // v0.11.26 — SEM O MAPA, A FEATURE NÃO FAZ NADA — E ISSO PRECISA
+            // APARECER. Era o pior tipo de falha que tem neste projeto: a
+            // expedição ficava ligada, o objetivo era escolhido, e nada
+            // acontecia porque a lista de criaturas vinha vazia (painel de
+            // expedição fechado). Sem log, sem status, sem pista.
+            if (!escolha) {
+              if (guild.avisoMapaEm !== alvo.objectiveId) {
+                guild.avisoMapaEm = alvo.objectiveId;
+                log(
+                  alvo.criaturas.length
+                    ? `Expedição "${alvo.label}": nenhuma caçada do catálogo mata ${alvo.criaturas.join(" ou ")} — não tenho pra onde mandar o personagem.`
+                    : `Expedição "${alvo.label}": ainda não sei quais criaturas contam pra esse objetivo. Abra o painel de expedição do jogo UMA vez com esta conta — eu leio a lista e guardo, e a partir daí funciona sozinho.`,
+                  true
+                );
+              }
+            }
             if (escolha) {
               const jaEstou = (currentHuntNameCache || cfg.huntName) === escolha.nome;
               if (guild.objetivoEscolhido !== alvo.objectiveId) {
                 guild.objetivoEscolhido = alvo.objectiveId;
+                guild.avisoMapaEm = null;
                 log(
                   `Expedição: "${alvo.label}" está em ${alvo.progress}/${alvo.quota} — caçando ${escolha.nome}` +
                     (escolha.tier ? ` no ${escolha.tier}` : "") +
@@ -3080,7 +3893,7 @@
               }
               if (!jaEstou) {
                 updatePanelStatus("Indo pra expedição");
-                await ensureHunting({ ...cfg, pullLevel: escolha.tier || cfg.pullLevel }, escolha.nome);
+                await ensureHunting({ ...cfg, pullLevel: TIER_MAIS_DIFICIL }, escolha.nome);
                 updatePanelStatus("Caçando (expedição)");
                 consecutiveErrors = 0;
                 lastStaminaLogAt = 0;
@@ -3113,31 +3926,87 @@
         return;
       }
 
+      // v0.11.27 — EXPEDIÇÃO PODE TIRAR O PERSONAGEM DE UMA CAÇADA QUE NÃO
+      // SERVE PRA NADA.
+      //
+      // Antes, a decisão de expedição só rodava no trecho de "não está
+      // caçando". Ligar a expedição no meio de uma caçada não tinha efeito
+      // nenhum até o personagem sair por conta própria — bag cheia, stamina ou
+      // spawn seco. Na conta medida isso deu 2 ciclos em 1h04: meia hora sem
+      // reagir, com o painel prometendo que "a expedição manda na escolha da
+      // caçada".
+      //
+      // Decisão do André: sai SÓ se a caçada atual não mata nada de nenhum
+      // objetivo pendente. Se serve, fica — trocar à toa perde o loot na bag e
+      // o tempo de transição.
+      if (cfg.expeditionEnabled && cfg.huntMode !== "group" && guild.cacadas.length) {
+        const troca = avaliarTrocaPorExpedicao(cfg);
+        if (troca) {
+          expedicaoUltimaTrocaEm = Date.now();
+          log(
+            `Expedição: "${troca.alvo.label}" está em ${troca.alvo.progress}/${troca.alvo.quota} e ${troca.atual} não mata nenhuma criatura dos objetivos pendentes — indo pra ${troca.escolha.nome}` +
+              (troca.escolha.tier ? ` no ${troca.escolha.tier}` : "") +
+              "."
+          );
+          updatePanelStatus("Indo pra expedição");
+          await leaveHunt();
+          zerarDeteccaoDeSpawn();
+          await ensureHunting({ ...cfg, pullLevel: TIER_MAIS_DIFICIL }, troca.escolha.nome);
+          updatePanelStatus("Caçando (expedição)");
+          consecutiveErrors = 0;
+          return;
+        }
+      }
+
       // v0.11.10 — SPAWN SECO. Vale pra caçada normal e pra expedição: o
       // critério não olha QUAL caçada é, só se ela parou de produzir bicho.
       // Só no modo Solo — sair da caçada no modo Em grupo desmontaria a
       // sincronização do time.
       if (spawnCfg.enabled && cfg.huntMode !== "group") {
+        gravarPerfilSePassouTempo();
         const seco = avaliarSpawnSeco();
         // Uma reentrada por vez: depois de reentrar, o detector precisa de
         // amostra nova antes de poder concluir qualquer coisa de novo.
         if (seco && Date.now() - spawnUltimaReentradaEm > 60000) {
           spawnUltimaReentradaEm = Date.now();
           const caçadaAtual = currentHuntNameCache || cfg.huntName;
+          // v0.11.30 — RENOVAR NÃO PODE SIGNIFICAR ABANDONAR A EXPEDIÇÃO.
+          // Antes daqui saía `ensureHunting(cfg, caçadaAtual)`: reentrava com
+          // o tier do menu (não o mais difícil) e, quando o cache do nome não
+          // estava quente, com `cfg.huntName` — ou seja, a caçada principal.
+          // Era o segundo caminho que tirava o personagem da expedição sem
+          // ninguém ter pedido.
+          const alvo = alvoDeCacada(cfg, caçadaAtual);
+          const destino = alvo.nome || caçadaAtual;
           const seg = Math.round(seco.parado / 1000);
           log(
             (seco.motivo === "volta"
               ? "Spawn esgotado: o personagem deu uma volta completa na caçada sem matar nada"
+              : seco.motivo === "andou"
+                ? `Spawn esgotado: andou ${seco.tiles} tiles sem matar nada e sem nada vivo por perto (o normal nesta caçada é ${seco.tilesTipicos}, o limite é ${seco.limiarTiles})`
+                : seco.motivo === "lote"
+                  ? `Spawn esgotado: ${seg}s sem nascer um lote novo de criaturas (o normal nesta caçada é um a cada ${Math.round(seco.tipico / 1000)}s, medido em ${seco.lotes} lotes)`
               : `Spawn esgotado: ${seg}s sem nascer nenhuma criatura e nada vivo por perto`) +
-              (seco.tipico >= 1000 ? ` (o normal aqui é uma a cada ${Math.round(seco.tipico / 1000)}s)` : "") +
-              " — saindo e entrando de novo pra renovar a caçada."
+              (seco.motivo !== "andou" && seco.motivo !== "lote" && seco.tipico >= 1000
+                ? ` (o normal aqui é uma a cada ${Math.round(seco.tipico / 1000)}s)`
+                : "") +
+              (destino === caçadaAtual
+                ? " — saindo e entrando de novo pra renovar a caçada."
+                : ` — saindo e indo pra "${destino}".`)
           );
           updatePanelStatus("Renovando a caçada");
           await leaveHunt();
           zerarDeteccaoDeSpawn();
-          await ensureHunting(cfg, caçadaAtual);
-          updatePanelStatus("Caçando");
-          log(`De volta em "${caçadaAtual}" com o spawn renovado.`);
+          // Mudou de mapa: conta como troca de expedição, pra não virar
+          // carrossel se dois objetivos ficarem empatados.
+          if (alvo.expedicao && destino !== caçadaAtual) expedicaoUltimaTrocaEm = Date.now();
+          await ensureHunting({ ...cfg, pullLevel: alvo.pullLevel }, destino);
+          updatePanelStatus(alvo.expedicao ? "Caçando (expedição)" : "Caçando");
+          log(
+            alvo.expedicao
+              ? `De volta em "${destino}" com o spawn renovado, seguindo na expedição "${alvo.objetivo.label}" (${alvo.objetivo.progress}/${alvo.objetivo.quota}).`
+              : `De volta em "${destino}" com o spawn renovado.`
+          );
           return;
         }
       }
@@ -3306,6 +4175,9 @@
     // v0.9.15 — o nome da caçada em cache também: sem isso, trocar a caçada
     // no menu lateral com a automação desligada não tinha efeito ao religar.
     currentHuntNameCache = null;
+    // v0.11.34 — o que a caçada ensinou até agora não pode morrer com o
+    // desligamento.
+    gravarPerfil();
     saveState({ running: false, selfStoppedAt: motivo === "erros" ? Date.now() : 0 });
     updatePanelRunning(false);
     updatePanelStatus("Parado");
@@ -3832,6 +4704,11 @@
     // são do personagem anterior e não valem mais.
     currentHuntNameCache = null;
     soldSinceArrivingInCity = false;
+    // v0.11.31 — e o que o protocolo sabia também era do anterior: nome, id,
+    // vocação e o inventário inteiro. O 103/15/74 do novo personagem chegam
+    // em segundos; até lá, "não sei" é a resposta certa.
+    euZerar();
+    bolsaZerar();
     // O `autoResumeSession` guarda "o último personagem que logou" pra
     // retomar sozinho depois de um server save — atualiza pro que entrou
     // agora, senão ele tentaria voltar pro personagem sem stamina.
@@ -3869,9 +4746,11 @@
       await exitToCharacterList();
       await playCharacter(name);
       // Mesma limpeza de estado que a troca automática já faz — cache de
-      // caçada e trava de venda são do personagem anterior.
+      // caçada, trava de venda e tudo que o protocolo sabia do anterior.
       currentHuntNameCache = null;
       soldSinceArrivingInCity = false;
+      euZerar();
+      bolsaZerar();
       saveState({ autoResumeSessionCharacter: name });
       novaSessaoStats("troca de personagem (comando remoto)");
       log(`Agora jogando com "${name}" (comando remoto).`);
@@ -4118,6 +4997,55 @@
       };
     }
 
+    // v0.11.33 — ANDOU MUITO SEM MATAR NADA.
+    //
+    // Este é o critério que responde à queixa do André ("o boneco anda
+    // bastante tempo sem bicho na tela", "ainda acho que demora demaaais"), e
+    // ele existe porque o critério de TEMPO quase nunca calibra: o ritmo de
+    // spawn só é aprendido a partir de 8 intervalos, e nas caçadas em que o
+    // bicho nasce em LOTE a maioria dos intervalos é de milissegundos e é
+    // descartada — o painel dele mostrava "aprendendo o ritmo (0/8)" com a
+    // caçada rodando. Sem ritmo aprendido, o limiar cai no piso de 90s SEMPRE.
+    //
+    // Tiles não têm esse problema: toda morte gera uma amostra, sempre.
+    // Simulado contra as capturas reais (229 mortes, quatro trechos de caçada
+    // saudável e dois trechos secos): dispara nos dois secos, nenhuma vez nos
+    // saudáveis, e ~18s depois da última morte em vez dos 90s do piso.
+    const limiarTiles = limiarDeTiles();
+    if (limiarTiles !== null && spawnWatch.tilesDesdeMorte.size >= limiarTiles) {
+      return {
+        motivo: "andou",
+        parado: Date.now() - spawnWatch.ultimoSpawnEm,
+        limiar: 0,
+        tipico: intervaloTipicoDeSpawn(),
+        tiles: spawnWatch.tilesDesdeMorte.size,
+        limiarTiles,
+        tilesTipicos: tilesTipicos(),
+      };
+    }
+
+    // v0.11.33 — O MUNDO PAROU DE PRODUZIR.
+    //
+    // Complementa o critério de tiles em vez de substituí-lo, porque os dois
+    // falham em situações diferentes: se o personagem estiver preso num canto
+    // (andando pouco), os tiles não acumulam e este aqui responde; se a caçada
+    // nascer bicho longe e ele varrer o mapa sem achar, os tiles respondem
+    // antes. Vale o que disparar primeiro.
+    const limiarLote = limiarDeLote();
+    if (limiarLote !== null && spawnWatch.loteArmado && spawnWatch.ultimoSpawnEm) {
+      const calado = Date.now() - spawnWatch.ultimoSpawnEm;
+      if (calado >= limiarLote) {
+        spawnWatch.loteArmado = false;
+        return {
+          motivo: "lote",
+          parado: calado,
+          limiar: limiarLote,
+          tipico: loteTipicoMs(),
+          lotes: spawnWatch.perfilLotes.length,
+        };
+      }
+    }
+
     const tipico = intervaloTipicoDeSpawn();
     const piso = Math.max(30, Number(spawnCfg.minSeconds) || 90) * 1000;
     const fator = Math.max(2, Number(spawnCfg.factor) || 4);
@@ -4138,6 +5066,14 @@
     spawnWatch.voltaEm = 0;
     spawnWatch.mortesNaVolta = 0;
     spawnWatch.mortesNaVoltaAnterior = null;
+    // v0.11.33 — a CONTAGEM zera; o PERFIL APRENDIDO não. Zerar o aprendizado
+    // aqui mataria a feature: `zerarDeteccaoDeSpawn()` roda a cada troca de
+    // instância, ou seja, toda vez que a automação sai e entra pra renovar o
+    // spawn — o detector recomeçaria do zero exatamente depois de agir.
+    spawnWatch.tilesDesdeMorte.clear();
+    spawnWatch.ultimoLoteEm = 0;
+    spawnWatch.loteArmado = true;
+    gravarPerfil();
   }
 
   function startCitySellWatcher() {
@@ -4512,6 +5448,14 @@
 
   // Vocação do PRÓPRIO personagem ativo — essa automação só faz sentido
   // jogando de suporte.
+  //
+  // v0.11.31 — ESTA É A ÚNICA LEITURA QUE FICA NO DOM DE PROPÓSITO. O
+  // protocolo manda a vocação BASE ("knight", "druid" — tipo 77 e tipo 15),
+  // e o jogo mostra a PROMOVIDA ("EK", "ED"). Um Druid não promovido e um
+  // Elder Druid são "druid" no protocolo e coisas diferentes na tela. Como o
+  // sync de EK compara justamente com "Elder Druid", trocar a fonte aqui
+  // ligaria a automação pra quem não deveria. A vocação base fica exposta no
+  // painel (`vocacaoProtocolo`), mas quem decide continua sendo o DOM.
   function getActiveCharacterVocation() {
     const el = queryVisible(document, SEL.characterVocation);
     if (!el) return null;
@@ -4545,6 +5489,13 @@
   // vivo: "Experiência 1.827.258/6.716.200" (ponto como separador de milhar).
   // Devolve { atual, necessario } ou null se não deu pra ler — nunca chuta.
   function getExperience() {
+    // v0.11.23 — o tipo 77 traz `experience` e `experienceNeeded` como números,
+    // e chega ~2x por segundo. A leitura de DOM abaixo depende do atributo
+    // `title` do `.hud-exp` ("Experiência 1.827.258/6.716.200"), que só existe
+    // depois de o HUD montar e quebraria se o jogo mudasse a formatação.
+    if (fichaFresca() && economia.ultimoXp && economia.ultimoXp.necessario) {
+      return { atual: economia.ultimoXp.atual, necessario: economia.ultimoXp.necessario };
+    }
     const el = queryVisible(document, SEL.hudExp);
     const title = el && el.getAttribute("title");
     if (!title) return null;
@@ -4738,7 +5689,30 @@
 
   // ---------- leitura de caçadas/tiers (pra alimentar os selects no host) ----------
 
+  // v0.11.23 — o catálogo de caçadas vem PRONTO no tipo 42, no login: 60
+  // caçadas com id, nome, monstros e tiers (`Cautious/Bold/Reckless`) já com
+  // o `monsterCount`, que é o tamanho do pull.
+  //
+  // O caminho de DOM abaixo abria o seletor de caçadas, limpava o campo de
+  // busca, esperava, lia os botões e fechava a janela — uma sequência de
+  // cliques reais só pra montar uma lista. E era frágil de um jeito
+  // específico: quando os botões de tier não apareciam nos 4s de espera, o
+  // resultado vazio ia pro cache e travava aquela caçada com o dropdown vazio
+  // (o bug da v0.9.5). Lendo do protocolo, nada disso existe.
+  function catalogoDoProtocolo() {
+    if (!Array.isArray(guild.cacadas) || !guild.cacadas.length) return null;
+    return guild.cacadas;
+  }
+
   async function scrapeHuntNames(forceRefresh) {
+    const doProtocolo = catalogoDoProtocolo();
+    if (doProtocolo) {
+      const names = doProtocolo.map((h) => (h && h.name ? String(h.name).trim() : "")).filter(Boolean);
+      if (names.length) {
+        saveHuntCatalogNames(names);
+        return names;
+      }
+    }
     if (!forceRefresh) {
       const cached = loadHuntCatalog();
       if (cached.names && cached.names.length) return cached.names;
@@ -4776,6 +5750,17 @@
     // "já mapeado" um resultado com pelo menos 1 tier de verdade — cache
     // vazio/ausente sempre tenta buscar ao vivo de novo, e só GRAVA no
     // cache quando o scrape realmente trouxe alguma coisa.
+    // v0.11.23 — pelo tipo 42 os tiers vêm na ordem do jogo e com o tamanho
+    // do pull junto, sem abrir janela nenhuma.
+    const doProtocolo = catalogoDoProtocolo();
+    if (doProtocolo) {
+      const h = doProtocolo.find((x) => x && String(x.name).trim() === String(huntName).trim());
+      const tiers = h && Array.isArray(h.tiers) ? h.tiers.map((t) => (t && t.name ? String(t.name) : "")).filter(Boolean) : [];
+      if (tiers.length) {
+        saveHuntCatalogTiers(huntName, tiers);
+        return tiers;
+      }
+    }
     if (!forceRefresh) {
       const cached = loadHuntCatalog();
       if (cached.tiersByHunt && cached.tiersByHunt[huntName] && cached.tiersByHunt[huntName].length) {
