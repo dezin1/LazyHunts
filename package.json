@@ -1,6 +1,6 @@
 {
   "name": "huntera-multiconta",
-  "version": "0.11.21",
+  "version": "0.11.22",
   "description": "App desktop (Electron) não-oficial pra manter várias contas do Huntera logadas em paralelo, cada uma isolada, numa janela só. Projeto de aprendizado — inspirado no HunteraFarm (descontinuado), reescrito do zero.",
   "private": true,
   "main": "main.js",
@@ -9,7 +9,8 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
-    "publish": "electron-builder --publish always"
+    "publish": "electron-builder --publish always",
+    "commit": "node scripts/commit.mjs"
   },
   "devDependencies": {
     "electron": "^32.0.0",

@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.11.22 — 2026-09-14
+
+### O painel dizia "Iniciando" com o personagem caçando
+
+Você achou que era falha de leitura por WebSocket. Não era — o `isHunting()` estava certo o tempo todo; quem mentia era a etiqueta.
+
+O `startBot()` escrevia "Iniciando", e se o personagem **já estava** na caçada o tick chegava no fim e voltava sem nunca escrever outro rótulo. O texto só mudava quando alguma coisa **acontecia**, e caçada correndo bem não é um acontecimento — então ficava congelado no primeiro rótulo pra sempre.
+
+Agora o rótulo é escrito no estado estável, com o nome da caçada junto (`Caçando "Hero Fortress"`), que sai de graça do tipo 54 cruzado com o catálogo. E o `updatePanelStatus` passou a ignorar repetição, senão escrever a cada tick viraria tráfego de estado a cada 4 segundos por conta.
+
+### Party e caçada em grupo pelo protocolo
+
+| antes (DOM) | agora |
+|---|---|
+| lista de membros (exigia a janela de party **aberta**) | tipo 72 |
+| "sou o líder?" (checkbox marcado à mão) | tipo 72 `leaderId` / tipo 51 `leader` |
+| roster do grupo (só com o diálogo de convite **aberto**) | tipo 51, contínuo |
+| convite de caçada em grupo | tipo 51 `canAnswer && !youAccepted` |
+
+As duas condições em negrito eram falhas silenciosas: com a janela fechada, a lista de membros vinha vazia — e "vazia" é indistinguível de "não tem party" pra quem chama. O sync do EK dependia de pegar os poucos segundos em que o diálogo estava na tela.
+
+**O checkbox de líder continua existindo** e continua valendo quando o protocolo está calado (fora de party, jogo recém-aberto). O painel passa a mandar os dois: o que você marcou e o que o servidor respondeu.
+
+**Uma diferença de significado que não varri pra baixo do tapete:** o DOM traz o *papel atribuído* na caçada (`role-tank`), o protocolo traz a *vocação* (`knight`). Na prática o tank é o knight, mas não é a mesma afirmação — então o papel do DOM tem precedência quando existe, e a vocação só responde quando o DOM não tem o que dizer. Tem teste pros dois casos, inclusive o de um tank que não é knight.
+
+**O que eu NÃO migrei:** o "time pronto?" do líder. O tipo 51 tem `arrived`, mas isso é "todo mundo já entrou na caçada" — a pergunta ali é "todo mundo está pronto pra *receber* o convite", que é o momento anterior. Trocar uma pela outra seria um bug sutil.
+
+### Desgaste de anel e amuleto entra no custo
+
+Pendência aberta desde que você perguntou se dava pra contabilizar. Dá: o tipo 92 avisa na hora (`params.item = "life ring"`), e o preço vem do que estava equipado naquele slot, capturado do tipo 55.
+
+⚠️ **O jogo não conta isso no "Gasto" dele** — a lista `supplies` do tipo 41 traz só runas e potions. Então esta é uma linha nossa, somada ao custo nos dois caminhos pra que free e premium continuem comparáveis entre si, e separada no detalhe pra ficar claro onde o número do Swag diverge do analisador do jogo, de propósito.
+
+Item sem preço conhecido conta a peça e **não** inventa valor.
+
+
 ## 0.11.21 — 2026-09-14
 
 ### Analisador simples, e igual para conta free e premium

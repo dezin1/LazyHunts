@@ -113,6 +113,13 @@
   // daqui; aceitar continua sendo clique no DOM.
   const convite = { de: null, membros: [], em: 0 };
 
+  // v0.11.22 — PARTY pelo protocolo (tipo 72). Traz nome, level, vocação e a
+  // STAMINA de cada membro, ao vivo — e o `leaderId`, que hoje é um checkbox
+  // marcado na mão. ⚠️ A forma muda com o contexto: dentro da caçada cada
+  // membro traz `dps`/`damageTotal`/`hps`; na cidade esses campos somem.
+  // Código que assumir `dps` presente quebra fora da caçada.
+  const party = { lider: null, membros: [], em: 0 };
+
   // v0.11.17 — CAÇADA EM GRUPO pelo protocolo (tipo 51). O jogo manda a
   // máquina de estados inteira a cada mudança:
   //   {leaderName, huntId, tier, canAnswer, youAccepted,
@@ -181,6 +188,20 @@
     itensVendidos: 0,
     goldVendido: 0,
     ultimaVendaEm: 0,
+
+    // v0.11.22 — DESGASTE DE EQUIPAMENTO. O André pediu isso lá atrás ("ring e
+    // amuleto também têm preço fixo") e ficou como pendência porque não havia
+    // como medir. O tipo 92 avisa na hora: "Your life ring crumbled to dust.
+    // You put on another (27 left)." com `params.item` separado do texto.
+    //
+    // ⚠️ O JOGO NÃO CONTA ISSO NO "GASTO" DELE. A lista `supplies` do tipo 41
+    // traz só runas e potions. Então isto é uma linha NOSSA, somada ao custo
+    // nos dois caminhos (free e premium) pra que os dois continuem
+    // comparáveis entre si — e separada no detalhe, pra ficar claro que o
+    // número do Swag e o do analisador do jogo divergem de propósito aqui.
+    equipados: new Map(), // slot -> {itemId, nome}
+    desgaste: new Map(), // nome -> {qtd, itemId}
+    custoDesgaste: 0,
   };
 
   // v0.11.12 — EXPEDIÇÃO DA GUILD e CATÁLOGO DE CAÇADAS, pelo protocolo.
@@ -223,6 +244,13 @@
     mundo.scenarioId = typeof p.scenarioId === "string" ? p.scenarioId : null;
     mundo.ambience = typeof p.ambience === "string" ? p.ambience : null;
     mundo.em = Date.now();
+    // v0.11.22 — o nome da caçada sai daqui de graça (cenário × catálogo do
+    // tipo 42). Manter o cache em dia faz o rótulo do painel dizer QUAL
+    // caçada, e não só "Caçando".
+    try {
+      const nome = nomeDaCacadaPeloProtocolo();
+      if (nome) currentHuntNameCache = nome;
+    } catch (e) {}
     if (mudou) {
       mundo.trocasDeInstancia++;
       // Instância nova = spawn novo. Antes o detector era zerado por
@@ -351,6 +379,9 @@
     economia.itensVendidos = 0;
     economia.goldVendido = 0;
     economia.ultimaVendaEm = 0;
+    economia.desgaste.clear();
+    economia.custoDesgaste = 0;
+    // `equipados` NÃO zera: é o estado atual do personagem, não da sessão.
   }
 
   // v0.11.21 — mortes pelo bestiary. O tipo 9 traz o contador ACUMULADO por
@@ -401,9 +432,33 @@
   // Confirmado contra o gold: +980 exatos no mesmo instante. E como vem em
   // `params`, não depende do texto — se o jogo traduzir a mensagem, continua
   // funcionando; casar string quebraria.
+  // v0.11.22 — anel/amuleto que se gastou. O nome vem em `params.item`, e o
+  // itemId (que dá o preço) vem do que estava EQUIPADO naquele slot, capturado
+  // do tipo 55. Sem o itemId não dá pra precificar — nesse caso conta a peça
+  // mas não o valor, em vez de chutar um preço.
+  function desgasteLerMensagem(p) {
+    const nome = p.params && typeof p.params.item === "string" ? p.params.item : null;
+    if (!nome) return;
+    let itemId = null;
+    for (const eq of economia.equipados.values()) {
+      if (eq && eq.nome === nome) { itemId = eq.itemId; break; }
+    }
+    const reg = economia.desgaste.get(nome) || { qtd: 0, itemId };
+    reg.qtd++;
+    if (itemId != null) reg.itemId = itemId;
+    economia.desgaste.set(nome, reg);
+    const preco = reg.itemId != null ? economia.precoNpc.get(reg.itemId) : undefined;
+    if (typeof preco === "number") economia.custoDesgaste += preco;
+  }
+
   function vendaLerMensagem(p) {
     if (!p || !p.params) return;
     const t = String(p.template || "");
+    // "Your {item} {fate}." — equipamento consumido.
+    if (/^your \{item\}/i.test(t)) {
+      desgasteLerMensagem(p);
+      return;
+    }
     if (!/quick sold/i.test(t) && !/vend/i.test(t)) return;
     const itens = Number(p.params.count);
     const gold = Number(p.params.amount);
@@ -449,6 +504,19 @@
       return;
     }
     if (tipo === "55") {
+      // v0.11.22 — o que está equipado em cada slot. Serve só pra precificar o
+      // desgaste: quando o tipo 92 diz "your life ring crumbled", é aqui que
+      // mora o itemId daquele anel.
+      if (Array.isArray(p.changes)) {
+        for (const ch of p.changes) {
+          if (!ch || ch.container !== "equipment" || !ch.slot) continue;
+          if (ch.item && ch.item.itemId != null) {
+            economia.equipados.set(ch.slot, { itemId: ch.item.itemId, nome: ch.item.name || null });
+          } else {
+            economia.equipados.delete(ch.slot);
+          }
+        }
+      }
       if (typeof p.gold !== "number") return;
       if (economia.ultimoGold != null) {
         const delta = p.gold - economia.ultimoGold;
@@ -550,7 +618,8 @@
   // v0.11.18 — entrou 77 (ficha do personagem: stamina, level, vocação).
   // v0.11.21 — entraram 9 (bestiary, pra contar mortes) e 92 (aviso do
   // sistema, que confirma a venda rápida e o desgaste de equipamento).
-  const TIPOS_ESCUTADOS = new Set(["9", "15", "18", "21", "33", "41", "42", "51", "54", "55", "57", "60", "71", "77", "92", "103"]);
+  // v0.11.22 — entrou 72 (party ao vivo: membros, vocação, stamina, líder).
+  const TIPOS_ESCUTADOS = new Set(["9", "15", "18", "21", "33", "41", "42", "51", "54", "55", "57", "60", "71", "72", "77", "92", "103"]);
 
   function spawnLerMensagem(texto) {
     // Formato: [tipo, payload]. Filtra ANTES do JSON.parse — isto roda muito
@@ -608,6 +677,12 @@
       convite.de = typeof p.fromName === "string" ? p.fromName : null;
       convite.membros = Array.isArray(p.members) ? p.members : [];
       convite.em = Date.now();
+      return;
+    }
+    if (tipo === "72") {
+      party.lider = p.leaderId == null ? null : p.leaderId;
+      party.membros = Array.isArray(p.members) ? p.members : [];
+      party.em = Date.now();
       return;
     }
     if (tipo === "51") {
@@ -1422,10 +1497,10 @@
           duracaoMs,
           kills: Number(s.kills) || 0,
           xp: Number(s.experience) || 0,
-          custo: waste,
-          lucro: lootValue - waste,
+          custo: waste + economia.custoDesgaste,
+          lucro: lootValue - waste - economia.custoDesgaste,
           xpHora: horas > 0 ? Math.round((Number(s.experience) || 0) / horas) : null,
-          lucroHora: horas > 0 ? Math.round((lootValue - waste) / horas) : null,
+          lucroHora: horas > 0 ? Math.round((lootValue - waste - economia.custoDesgaste) / horas) : null,
           vendas: economia.vendas,
           goldVendido: economia.goldVendido,
         },
@@ -1444,6 +1519,8 @@
             saldoLeilao: Math.round((valorLeilao - waste) / horas),
           } : null,
         },
+        desgaste: [...economia.desgaste.entries()].map(([nome, r]) => ({ nome, qtd: r.qtd })),
+        custoDesgaste: economia.custoDesgaste,
         itens: itens.slice(0, 25),
         valorNpc: lootValue,
         valorLeilao,
@@ -1513,12 +1590,12 @@
       resumo: (() => {
         const duracaoMs = economia.inicio ? Date.now() - economia.inicio : 0;
         const horas = duracaoMs > 0 ? duracaoMs / 3600000 : 0;
-        const lucro = valorNpc - economia.custoTotal;
+        const lucro = valorNpc - economia.custoTotal - economia.custoDesgaste;
         return {
           duracaoMs,
           kills: economia.kills,
           xp: economia.xp,
-          custo: economia.custoTotal,
+          custo: economia.custoTotal + economia.custoDesgaste,
           lucro,
           xpHora: horas > 0 ? Math.round(economia.xp / horas) : null,
           lucroHora: horas > 0 ? Math.round(lucro / horas) : null,
@@ -1527,6 +1604,8 @@
         };
       })(),
       itensSemPreco,
+      desgaste: [...economia.desgaste.entries()].map(([nome, r]) => ({ nome, qtd: r.qtd })),
+      custoDesgaste: economia.custoDesgaste,
       itens: itens.slice(0, 25),
       valorNpc,
       valorLeilao,
@@ -1762,6 +1841,11 @@
       characterLevel: getActiveCharacterLevel(),
       // v0.9.6 — auto convidar pra party.
       isPartyLeader: cfg.isPartyLeader,
+      // v0.11.22 — o que VALE na decisão. Separado do checkbox de propósito:
+      // o checkbox continua refletindo o que o André marcou, e este campo diz
+      // o que o servidor respondeu (ou o checkbox, quando ele está calado).
+      souLiderEfetivo: souLider(cfg),
+      partyMembros: party.em ? party.membros.map((m) => ({ nome: m.name, vocacao: m.vocation, stamina: m.staminaMinutes })) : null,
       autoInvitePartyEnabled: cfg.autoInvitePartyEnabled,
       autoInvitePartyTargets: cfg.autoInvitePartyTargets,
       // v0.9.9 — Modo de caçada + sincronizar venda de loot em grupo.
@@ -2597,7 +2681,7 @@
       pendingGroupHuntName = huntBeforeLeaving || pendingGroupHuntName || cfg.huntName;
       isAwaitingGroupHuntSync = true;
       awaitingGroupHuntSyncSince = Date.now();
-      if (cfg.isPartyLeader) {
+      if (souLider(cfg)) {
         groupHuntSyncStatus = "leaderWaitingTeam";
         updatePanelStatus("Aguardando o time");
         log("Loot vendido — aguardando o time inteiro terminar de vender antes de retomar a caçada em grupo...");
@@ -2927,7 +3011,7 @@
         // mandando o convite de verdade pro time; quem NÃO é líder continua
         // só esperando (o próprio jogo só deixa o líder iniciar).
         if (cfg.huntMode === "group") {
-          if (!cfg.isPartyLeader) {
+          if (!souLider(cfg)) {
             updatePanelStatus("Aguardando caçada em grupo");
             return;
           }
@@ -3058,6 +3142,20 @@
         }
       }
 
+      // v0.11.22 — O RÓTULO PRECISA REFLETIR O ESTADO ESTÁVEL, NÃO SÓ AS
+      // TRANSIÇÕES.
+      //
+      // Bug reportado pelo André: personagem caçando há minutos e o painel
+      // dizendo "Iniciando" nas duas contas. O `startBot()` escrevia
+      // "Iniciando" e, se o personagem JÁ estava na caçada, o tick chegava
+      // aqui e dava `return` sem nunca escrever outro rótulo. Ou seja, o texto
+      // só mudava quando alguma coisa ACONTECIA; caçada correndo bem não é um
+      // acontecimento, e ficava congelado no primeiro rótulo pra sempre.
+      //
+      // Ele achou que era falha de leitura por WebSocket. Não era — o
+      // `isHunting()` estava certo o tempo todo; quem mentia era a etiqueta.
+      updatePanelStatus(`Caçando${currentHuntNameCache ? ` "${currentHuntNameCache}"` : ""}`);
+
       const remaining = getCapacityRemaining();
       if (remaining === null || remaining > cfg.capacityThreshold) return;
 
@@ -3180,7 +3278,7 @@
     updatePanelStatus("Iniciando");
     log(
       cfg.huntMode === "group"
-        ? `Automação ligada no modo "Em grupo"${cfg.isPartyLeader ? " (líder da party — vou mandar o convite de caçada em grupo)" : " (membro — esperando o convite do líder)"}.`
+        ? `Automação ligada no modo "Em grupo"${souLider(cfg) ? " (líder da party — vou mandar o convite de caçada em grupo)" : " (membro — esperando o convite do líder)"}.`
         : "Automação ligada. Garantindo que a caçada configurada está ativa..."
     );
     startMonitoring();
@@ -3380,6 +3478,13 @@
   // amigo — não tem botão visível.
 
   function getPartyMemberNames() {
+    // v0.11.22 — pelo tipo 72 não depende de a janela de party estar ABERTA,
+    // que era a condição silenciosa do seletor `.party-window .party-name`:
+    // com a janela fechada a lista vinha vazia, e "vazia" é indistinguível de
+    // "não tem party" pra quem chama.
+    if (party.em && party.membros.length) {
+      return party.membros.map((m) => (m && m.name ? String(m.name).trim() : "")).filter(Boolean);
+    }
     return Array.from(document.querySelectorAll(SEL.partyMemberNames))
       .map((el) => el.textContent.trim())
       .filter(Boolean);
@@ -3434,7 +3539,7 @@
   async function tryAutoInviteParty() {
     if (isBusy || !licensed) return;
     const cfg = loadState();
-    if (!cfg.autoInvitePartyEnabled || !cfg.isPartyLeader) return;
+    if (!cfg.autoInvitePartyEnabled || !souLider(cfg)) return;
     const targets = (cfg.autoInvitePartyTargets || []).map((s) => s.trim()).filter(Boolean);
     if (!targets.length) return;
 
@@ -4343,9 +4448,66 @@
       .filter(Boolean);
   }
 
+  // v0.11.22 — o roster do grupo, preferindo o protocolo.
+  //
+  // O caminho de DOM só existe ENQUANTO O DIÁLOGO DE CONVITE ESTÁ ABERTO — uma
+  // janela de poucos segundos. O tipo 51 mantém o roster o tempo todo, então
+  // o sync do EK deixa de depender de pegar aquele instante.
+  //
+  // ⚠️ UMA DIFERENÇA DE SIGNIFICADO QUE NÃO DÁ PRA VARRER PRA BAIXO DO TAPETE:
+  // o DOM traz o PAPEL atribuído na caçada (`role-tank`); o protocolo traz a
+  // VOCAÇÃO (`knight`). Na prática o tank é o knight, mas não é a mesma
+  // afirmação. Por isso o papel do DOM continua tendo precedência quando
+  // existe, e a vocação só responde quando o DOM não tem o que dizer.
+  function rosterDoGrupo() {
+    const doDom = getGroupHuntInviteRoster();
+    if (doDom && doDom.length) return { fonte: "dom", membros: doDom };
+    if (grupo.em && grupo.membros.length) {
+      return {
+        fonte: "protocolo",
+        membros: grupo.membros.map((m) => ({
+          name: m.name,
+          role: m.vocation === "knight" ? "tank" : "none",
+          vocation: m.vocation || null,
+          leader: m.leader === true,
+          arrived: m.arrived === true,
+        })),
+      };
+    }
+    return null;
+  }
+
+  // v0.11.22 — "sou o líder?" com o servidor tendo a palavra, e o checkbox
+  // como último recurso. O checkbox continua existindo e continua sendo o que
+  // vale quando o protocolo está calado (fora de party, jogo recém-aberto).
+  function souLider(cfg) {
+    const pelaRede = souLiderPeloProtocolo();
+    if (pelaRede !== null) return pelaRede;
+    return !!(cfg && cfg.isPartyLeader);
+  }
+
   function findEkInRoster(roster) {
     const tank = roster.find((m) => m.role === "tank");
     return tank ? tank.name : null;
+  }
+
+  // v0.11.22 — sou o líder da party? true / false / null.
+  //
+  // Hoje isso é um checkbox que o André marca conta por conta. O servidor sabe
+  // — tipo 51 (`leader` por membro) e tipo 72 (`leaderId`). Continua sendo
+  // `null` quando o protocolo não falou, e aí o checkbox decide, como antes.
+  function souLiderPeloProtocolo() {
+    const meuNome = getActiveCharacterName();
+    if (!meuNome) return null;
+    if (grupo.em && grupo.membros.length) {
+      const eu = grupo.membros.find((m) => m && m.name === meuNome);
+      if (eu) return eu.leader === true;
+    }
+    if (party.em && party.lider != null && party.membros.length) {
+      const eu = party.membros.find((m) => m && m.name === meuNome);
+      if (eu && eu.id != null) return eu.id === party.lider;
+    }
+    return null;
   }
 
   // Vocação do PRÓPRIO personagem ativo — essa automação só faz sentido
@@ -4501,15 +4663,20 @@
   async function syncEkTargetIfNeeded() {
     const cfg = loadState();
     if (!cfg.syncEkTarget) return;
-    const dialog = queryVisible(document, SEL.groupHuntInviteDialog);
-    if (!dialog) {
+    if (getActiveCharacterVocation() !== EK_SYNC_VOCATION) return; // só faz sentido jogando de suporte
+
+    // v0.11.22 — antes isto exigia o DIÁLOGO DE CONVITE aberto, uma janela de
+    // poucos segundos: perdeu o instante, não sincronizou. O tipo 51 mantém o
+    // roster o tempo todo. O DOM continua valendo quando o protocolo está
+    // calado (`rosterDoGrupo` decide), e sem nenhum dos dois o estado zera
+    // como antes.
+    const fonte = rosterDoGrupo();
+    if (!fonte) {
       lastSyncedRosterKey = null;
       return;
     }
-    if (getActiveCharacterVocation() !== EK_SYNC_VOCATION) return; // só faz sentido jogando de suporte
-
-    const roster = getGroupHuntInviteRoster();
-    if (!roster || !roster.length) return; // roster ainda não carregou
+    const roster = fonte.membros;
+    if (!roster.length) return; // roster ainda não carregou
     const ekName = findEkInRoster(roster);
     if (!ekName) return; // ninguém com papel "Tank" nessa party (ainda)
 
@@ -4810,6 +4977,10 @@
   // mexiam direto no DOM do painel flutuante) ----------
 
   function updatePanelStatus(text) {
+    // v0.11.22 — sem o "mudou?", isto vira `sendState()` a cada 4s repetindo o
+    // mesmo texto; e o rótulo agora é escrito em TODO tick de caçada saudável
+    // (ver `monitorTick`), o que multiplicaria esse tráfego por conta.
+    if (statusText === text) return;
     statusText = text;
     sendState();
   }

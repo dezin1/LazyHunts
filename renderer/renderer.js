@@ -1347,7 +1347,13 @@ function normalizeCharacterName(name) {
 
 function checkGroupHuntTeamReady() {
   for (const [leaderTabId, leaderState] of automationState.entries()) {
-    if (!leaderState || !leaderState.isPartyLeader || leaderState.huntMode !== "group") continue;
+    // v0.11.22 — `souLiderEfetivo` é o que o servidor respondeu (tipo 51/72);
+    // quando ele está calado, cai no checkbox, que é o comportamento antigo.
+    const ehLider =
+      leaderState && leaderState.souLiderEfetivo !== undefined && leaderState.souLiderEfetivo !== null
+        ? leaderState.souLiderEfetivo
+        : leaderState && leaderState.isPartyLeader;
+    if (!leaderState || !ehLider || leaderState.huntMode !== "group") continue;
     if (leaderState.groupHuntSyncStatus !== "leaderWaitingTeam") continue;
 
     const targets = (leaderState.autoInvitePartyTargets || [])
