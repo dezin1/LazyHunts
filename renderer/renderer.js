@@ -1922,19 +1922,6 @@ function renderProtocoloVivo(state) {
   const partes = [];
   partes.push(p.nome ? `personagem "${p.nome}"` : "personagem ainda não identificado");
   if (p.vocacao) partes.push(`${p.vocacao}${p.level ? ` ${p.level}` : ""}`);
-  if (!p.inventario) {
-    partes.push("inventário não recebido (capacidade segue pelo jogo)");
-  } else if (p.capacidadeConferida) {
-    partes.push(`capacidade conferida (${Number(p.capacidade).toFixed(2)})`);
-  } else {
-    const dif = typeof p.capacidadeDiferenca === "number" ? ` (diferença de ${p.capacidadeDiferenca.toFixed(2)})` : "";
-    partes.push(`capacidade em conferência${dif}`);
-  }
-  // v0.11.32 — item sem peso é a explicação mais provável de uma divergência,
-  // então ele aparece nomeado em vez de ficar só no log.
-  if (Array.isArray(p.itensSemPeso) && p.itensSemPeso.length) {
-    partes.push(`sem peso conhecido: ${p.itensSemPeso.slice(0, 3).join(", ")}`);
-  }
   el.textContent = `WebSocket: ${partes.join(" · ")}.`;
   el.hidden = false;
 }

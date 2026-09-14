@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.11.35 — 2026-09-14
+
+### A capacidade calculada saiu
+
+Você disse que ela não estava convincente, e está certo. Sai.
+
+Vale registrar o que ela era, porque a descoberta continua valendo mesmo sem o código: **o servidor não manda a capacidade restante**. Isso foi provado de duas formas — os 43 valores distintos de capacidade da sua captura não aparecem em nenhuma das 3.830 mensagens, e nenhum campo numérico do protocolo se comporta como capacidade restante. O que existia era uma **reconstrução** (peso de cada item do tipo 74 mais as mudanças do 55), e ela nunca mandou em nada: o número do jogo sempre foi quem decidiu sair pra vender. Mas um número derivado que não converge é ruído no painel, e não é isso que você pediu.
+
+Com ele saem também o tipo 74 e o tipo 26 da escuta — os dois só existiam pra esse cálculo. São **~300 KB a menos de JSON pra parsear por login, por conta**.
+
+Fica o que é leitura de verdade: **nome, level e vocação base** pelo tipo 103 + tipo 15, que continuam respondendo antes de o HUD montar e continuam sendo zerados a cada troca de personagem.
+
+Se um dia isso voltar, o que falta descobrir está no CLAUDE.md: o suspeito é o tipo 62, o container aberto (bag dentro da bag), que ficou de fora por não estar confirmado o que ele é.
+
+241 checagens no conjunto.
+
 ## 0.11.34 — 2026-09-14
 
 ### O que a caçada ensinou não pode morrer quando o app fecha

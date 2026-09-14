@@ -140,189 +140,22 @@
     eu.em = 0;
   }
 
-  // v0.11.31 — MODELO DA BOLSA, pra capacidade restante pelo protocolo.
+  // v0.11.35 — A CAPACIDADE CALCULADA FOI REMOVIDA (decisão do André).
   //
-  // O servidor NÃO manda a capacidade restante. O `capacity` do tipo 77 é o
-  // MÁXIMO: constante em 976 amostras de três capturas (310150 nas duas do
-  // Kina, 256015 na do Naj), enquanto o personagem caçava e enchia a bag.
+  // A v0.11.31 reconstruía o peso carregado (tipo 74 + tipo 55) pra derivar a
+  // capacidade restante, porque o servidor NÃO manda esse número — provado em
+  // dois testes: os 43 valores distintos de capacidade da captura não aparecem
+  // em nenhuma das 3.830 mensagens, e nenhum campo numérico do protocolo se
+  // comporta como capacidade restante. O cálculo entrou em modo de
+  // conferência, sem nunca mandar em nada.
   //
-  // O que dá pra fazer é reconstruir o peso carregado:
-  //   - tipo 74 = inventário inteiro no login (`slots` da bag, `satchel`,
-  //     `equipment` e `gold`), com `weight` POR UNIDADE em cada item;
-  //   - tipo 55 = cada mudança de slot, já com o estado NOVO daquele slot
-  //     (`{container,index,item}` pra bag/satchel, `{container,slot,item}` pra
-  //     equipamento, `item:null` quando esvaziou — 67 casos confirmados).
-  // Então: restante = (capacity − Σ peso×quantidade) / 1000.
+  // Na prática ele não convenceu, e o André mandou tirar. Está certo: um
+  // número derivado que não converge é ruído no painel, e o número do jogo já
+  // funciona. Fica só o que é LEITURA de verdade.
   //
-  // ⚠️ ISTO É DERIVADO, NÃO LIDO — e por isso entra em modo de CONFERÊNCIA:
-  // enquanto o HUD estiver legível, quem manda continua sendo o DOM, e o
-  // modelo só é usado depois de bater com ele três vezes seguidas. Se
-  // divergir, ele se marca como não-confiável e avisa no log, com os dois
-  // números. É o único jeito honesto de validar uma conta que eu não consigo
-  // fazer offline: nas capturas não existe o valor do HUD pra comparar.
-  const bolsa = {
-    base: false, // o tipo 74 chegou nesta sessão?
-    backpack: [],
-    satchel: [],
-    equipamento: {},
-    gold: null,
-    em: 0,
-    conferido: false, // já bateu com o DOM o suficiente pra ser usado sozinho
-    acertos: 0,
-    erros: 0,
-    ultimaDiferenca: null,
-    avisou: false,
-    // v0.11.32 — itens que passaram pelo inventário sem peso conhecido.
-    // Mapa itemId -> nome, pra divergência virar diagnóstico.
-    semPeso: new Map(),
-  };
-
-  const BOLSA_ACERTOS_PRA_CONFIAR = 3;
-  const BOLSA_TOLERANCIA = 0.05; // em unidades de capacidade (50 de peso cru)
-
-  function bolsaZerar() {
-    bolsa.base = false;
-    bolsa.backpack = [];
-    bolsa.satchel = [];
-    bolsa.equipamento = {};
-    bolsa.gold = null;
-    bolsa.em = 0;
-    bolsa.conferido = false;
-    bolsa.acertos = 0;
-    bolsa.erros = 0;
-    bolsa.ultimaDiferenca = null;
-    bolsa.avisou = false;
-    bolsa.semPeso.clear();
-  }
-
-  // v0.11.32 — CATÁLOGO DE PESOS (tipo 26), a rede de segurança do cálculo.
-  //
-  // Medido nas sete capturas: dos 4.087 itens que passam pelo protocolo, 4.085
-  // trazem `weight` na própria mensagem — e nos caminhos que alimentam o peso
-  // carregado (74, 55, 60, 62) a cobertura é 806 de 806. Ou seja, o catálogo
-  // não é necessário pro caso normal. Ele existe pro caso ANORMAL: um item
-  // chegar sem peso e o somatório silenciosamente perder alguns gramas.
-  //
-  // Escuta só o tipo 26, não o 66: medido, o 66 é SUBCONJUNTO estrito do 26
-  // (775 itens contra 836; zero itemIds exclusivos do 66). Ouvir os dois seria
-  // parsear 109 KB a mais por login sem ganhar um item.
-  const catalogoPesos = new Map(); // itemId -> peso por unidade
-
-  function catalogoLerItens(p) {
-    if (!p || !Array.isArray(p.items)) return;
-    for (const it of p.items) {
-      if (it && it.itemId != null && typeof it.weight === "number") {
-        catalogoPesos.set(it.itemId, it.weight);
-      }
-    }
-  }
-
-  // Peso de um slot. Três fontes, nessa ordem: o que veio na mensagem, o
-  // catálogo, e "não sei".
-  //
-  // ⚠️ "Não sei" vira ZERO no somatório de propósito — inventar um peso seria
-  // pior. Mas não vira SILÊNCIO: o item fica registrado em `bolsa.semPeso`, e
-  // é isso que transforma uma divergência de capacidade em diagnóstico ("o
-  // modelo errou 3.2 e tem um 'experience scroll' sem peso") em vez de
-  // mistério. Se a conferência bater MESMO com o desconhecido, então zero era
-  // o peso certo — e o caso se resolve sozinho.
-  function pesoDoItem(item) {
-    if (!item) return 0;
-    const qtd = typeof item.count === "number" && item.count > 0 ? item.count : 1;
-    if (typeof item.weight === "number") return item.weight * qtd;
-    if (item.itemId != null && catalogoPesos.has(item.itemId)) {
-      return catalogoPesos.get(item.itemId) * qtd;
-    }
-    if (item.itemId != null) bolsa.semPeso.set(item.itemId, item.name || `#${item.itemId}`);
-    return 0;
-  }
-
-  // Tipo 74 — inventário inteiro. É o único jeito de ter uma base: sem ele o
-  // modelo devolve null e a leitura continua no DOM, como antes.
-  function bolsaLerSnapshot(p) {
-    if (!p || typeof p !== "object") return;
-    bolsa.backpack = Array.isArray(p.slots) ? p.slots.slice() : [];
-    bolsa.satchel = Array.isArray(p.satchel) ? p.satchel.slice() : [];
-    bolsa.equipamento = p.equipment && typeof p.equipment === "object" ? { ...p.equipment } : {};
-    if (typeof p.gold === "number") bolsa.gold = p.gold;
-    bolsa.base = true;
-    bolsa.em = Date.now();
-    // Base nova = conferência nova. O snapshot pode ter chegado depois de uma
-    // troca de personagem, e os acertos do anterior não valem pra este.
-    bolsa.conferido = false;
-    bolsa.acertos = 0;
-    bolsa.erros = 0;
-  }
-
-  // Tipo 55 — o estado NOVO de cada slot que mudou.
-  function bolsaLerMudancas(p) {
-    if (!p || typeof p !== "object") return;
-    if (typeof p.gold === "number") bolsa.gold = p.gold;
-    if (!bolsa.base || !Array.isArray(p.changes)) return;
-    for (const c of p.changes) {
-      if (!c || typeof c !== "object") continue;
-      const item = c.item || null;
-      if (c.container === "equipment") {
-        if (typeof c.slot === "string") bolsa.equipamento[c.slot] = item;
-        continue;
-      }
-      const lista = c.container === "satchel" ? bolsa.satchel : c.container === "backpack" ? bolsa.backpack : null;
-      if (!lista || typeof c.index !== "number" || c.index < 0) continue;
-      lista[c.index] = item;
-    }
-    bolsa.em = Date.now();
-  }
-
-  function pesoCarregado() {
-    if (!bolsa.base) return null;
-    let total = 0;
-    for (const it of bolsa.backpack) total += pesoDoItem(it);
-    for (const it of bolsa.satchel) total += pesoDoItem(it);
-    for (const k of Object.keys(bolsa.equipamento)) total += pesoDoItem(bolsa.equipamento[k]);
-    return total;
-  }
-
-  // true/false/null — `null` é "não sei", e aí o DOM decide.
-  function capacidadeRestantePeloProtocolo() {
-    if (!bolsa.base) return null;
-    if (!fichaFresca() || typeof ficha.capacidadeMaxima !== "number") return null;
-    const peso = pesoCarregado();
-    if (peso === null) return null;
-    return (ficha.capacidadeMaxima - peso) / 1000;
-  }
-
-  // v0.16.0 do método, não do app: um número derivado só vira fonte depois de
-  // provar que bate com o número que já funciona.
-  function conferirCapacidade(doDom, doProtocolo) {
-    if (typeof doDom !== "number" || typeof doProtocolo !== "number") return;
-    const dif = Math.abs(doDom - doProtocolo);
-    bolsa.ultimaDiferenca = dif;
-    if (dif <= BOLSA_TOLERANCIA) {
-      bolsa.acertos++;
-      if (bolsa.acertos >= BOLSA_ACERTOS_PRA_CONFIAR) bolsa.conferido = true;
-      return;
-    }
-    bolsa.erros++;
-    bolsa.acertos = 0;
-    bolsa.conferido = false;
-    if (!bolsa.avisou) {
-      bolsa.avisou = true;
-      // v0.11.32 — com os itens sem peso no aviso, uma divergência deixa de
-      // ser mistério: ou o culpado está nomeado aqui, ou o problema é outro
-      // (o palpite seguinte é o tipo 62, container aberto, que ficou de fora
-      // justamente por eu não ter certeza do que ele é).
-      const desconhecidos = [...bolsa.semPeso.values()];
-      log(
-        `Capacidade pelo protocolo não bateu com a do jogo (${doProtocolo.toFixed(2)} contra ${doDom.toFixed(2)}, ` +
-          `diferença de ${dif.toFixed(2)}) — sigo usando a do jogo.` +
-          (desconhecidos.length
-            ? ` Passaram pela bag ${desconhecidos.length} ${desconhecidos.length === 1 ? "item sem peso conhecido" : "itens sem peso conhecido"}: ${desconhecidos.slice(0, 5).join(", ")}.`
-            : " Nenhum item passou sem peso, então a diferença vem de outro lugar.") +
-          " Isso é só um aviso de conferência, não muda o funcionamento.",
-        true
-      );
-    }
-  }
+  // Se algum dia isso voltar, o que falta descobrir está documentado no
+  // CLAUDE.md: o suspeito é o tipo 62 (container aberto, bag dentro da bag),
+  // que ficou de fora por não estar confirmado o que ele é.
 
   // v0.11.16 — último convite de party visto no protocolo (tipo 71).
   // `{fromId, fromName, members:[{name,level,vocation}]}`. Só a DETECÇÃO vem
@@ -1206,9 +1039,7 @@
   // v0.11.21 — entraram 9 (bestiary, pra contar mortes) e 92 (aviso do
   // sistema, que confirma a venda rápida e o desgaste de equipamento).
   // v0.11.22 — entrou 72 (party ao vivo: membros, vocação, stamina, líder).
-  // v0.11.31 — entrou o 74 (inventário inteiro no login). É a base sem a qual
-  // o peso carregado não existe; o 55 sozinho só diz o que MUDOU.
-  const TIPOS_ESCUTADOS = new Set(["9", "15", "18", "21", "33", "41", "42", "51", "54", "55", "57", "60", "26", "71", "72", "74", "77", "92", "103"]);
+  const TIPOS_ESCUTADOS = new Set(["9", "15", "18", "21", "33", "41", "42", "51", "54", "55", "57", "60", "71", "72", "77", "92", "103"]);
 
   function spawnLerMensagem(texto) {
     // Formato: [tipo, payload]. Filtra ANTES do JSON.parse — isto roda muito
@@ -1278,16 +1109,6 @@
       }
       return;
     }
-    if (tipo === "74") {
-      bolsaLerSnapshot(p);
-      return;
-    }
-    if (tipo === "26") {
-      // Chega UMA vez por login (~206 KB). Vira tabela de peso e nada mais —
-      // os campos de ataque/defesa/categoria são descartados de propósito.
-      catalogoLerItens(p);
-      return;
-    }
     if (tipo === "54") {
       mundoLerMensagem(p);
       return;
@@ -1327,9 +1148,6 @@
       guildLerMensagem(tipo, p);
       return;
     }
-    // O tipo 55 serve duas coisas: o custo (débito de gold, na economia) e o
-    // peso carregado (modelo da bolsa). Os dois leem a MESMA mensagem.
-    if (tipo === "55") bolsaLerMudancas(p);
     economiaLerMensagem(tipo, p);
   }
 
@@ -1582,12 +1400,10 @@
           if (estado === "aberto") socketJogo.abertoEm = Date.now();
           if (estado === "fechado") {
             socketJogo.fechadoEm = Date.now();
-            // v0.11.31 — socket caiu: o inventário e a identidade que o
-            // protocolo tinha viraram foto velha. O 74 e o 103 chegam de novo
-            // na reconexão (confirmado nas capturas: os dois vêm no mesmo
-            // estouro de login, ~2s depois de abrir).
+            // v0.11.31 — socket caiu: a identidade que o protocolo tinha
+            // virou foto velha. O 103 chega de novo na reconexão (confirmado
+            // nas capturas, ~2s depois de abrir).
             euZerar();
-            bolsaZerar();
           }
         } catch (e) {}
       });
@@ -2541,14 +2357,6 @@
         nome: eu.nome,
         vocacao: eu.vocacao, // base ("druid"), não a promovida ("ED")
         level: eu.level,
-        inventario: bolsa.base,
-        capacidade: capacidadeRestantePeloProtocolo(),
-        capacidadeConferida: bolsa.base ? bolsa.conferido : null,
-        capacidadeDiferenca: bolsa.ultimaDiferenca,
-        // v0.11.32 — quantos itens do catálogo de peso já chegaram, e quais
-        // itens passaram pela bag sem peso conhecido.
-        catalogoPesos: catalogoPesos.size,
-        itensSemPeso: [...bolsa.semPeso.values()],
       },
       // v0.9.6 — auto convidar pra party.
       isPartyLeader: cfg.isPartyLeader,
@@ -2756,27 +2564,9 @@
 
   // ---------- leitura de estado do jogo ----------
 
-  // v0.11.31 — capacidade restante: DOM enquanto o DOM responder, protocolo
-  // quando ele não responder E o modelo já tiver provado que bate.
-  //
-  // A ordem é deliberadamente o contrário da stamina. Lá o protocolo é uma
-  // LEITURA (o servidor manda `staminaMs`) e vence na hora. Aqui o número é
-  // DERIVADO de um somatório de pesos, e errar pra mais faz o personagem
-  // caçar de bag cheia; errar pra menos faz ele ir vender a cada dois
-  // minutos. Um número calculado não pode entrar mandando num número que já
-  // funciona — ele entra provando.
-  //
-  // O buraco que isso fecha é real: antes de o HUD montar, esta leitura
-  // devolvia `null`, e null aqui é "não sei" — o ciclo de venda simplesmente
-  // não acontecia até a interface aparecer.
   function getCapacityRemaining() {
     const el = document.querySelector(SEL.capacityValue);
-    const doDom = el ? parseCapacity(el.textContent) : null;
-    const doProtocolo = capacidadeRestantePeloProtocolo();
-    if (doDom !== null && doProtocolo !== null) conferirCapacidade(doDom, doProtocolo);
-    if (doDom !== null) return doDom;
-    if (doProtocolo !== null && bolsa.conferido) return doProtocolo;
-    return null;
+    return el ? parseCapacity(el.textContent) : null;
   }
 
   function getStaminaRemainingMinutes() {
@@ -4704,11 +4494,10 @@
     // são do personagem anterior e não valem mais.
     currentHuntNameCache = null;
     soldSinceArrivingInCity = false;
-    // v0.11.31 — e o que o protocolo sabia também era do anterior: nome, id,
-    // vocação e o inventário inteiro. O 103/15/74 do novo personagem chegam
-    // em segundos; até lá, "não sei" é a resposta certa.
+    // v0.11.31 — e o que o protocolo sabia também era do anterior: nome, id e
+    // vocação. O 103/15 do novo personagem chegam em segundos; até lá, "não
+    // sei" é a resposta certa.
     euZerar();
-    bolsaZerar();
     // O `autoResumeSession` guarda "o último personagem que logou" pra
     // retomar sozinho depois de um server save — atualiza pro que entrou
     // agora, senão ele tentaria voltar pro personagem sem stamina.
@@ -4750,7 +4539,6 @@
       currentHuntNameCache = null;
       soldSinceArrivingInCity = false;
       euZerar();
-      bolsaZerar();
       saveState({ autoResumeSessionCharacter: name });
       novaSessaoStats("troca de personagem (comando remoto)");
       log(`Agora jogando com "${name}" (comando remoto).`);
