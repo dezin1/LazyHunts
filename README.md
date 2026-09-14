@@ -72,6 +72,30 @@ origem — por isso lá só dava pra ter uma conta logada por vez. Aqui, cada
   contas ficam logadas ao mesmo tempo — cada uma só espera a própria
   stamina voltar.
 
+- **Party + Notificações no Telegram (v0.7.0)** — 5 features portadas do
+  `huntera-automacao` (extensão Chrome), já validadas ao vivo lá antes do
+  porte:
+  - **Notificações no Telegram** — painel de Configurações próprio (ícone ⚙️
+    na trilha, vale pras 4 contas juntas): token do bot, Chat ID, e um botão
+    "Enviar notificação de teste". Por padrão só ERROS viram notificação;
+    "notificar todo evento" manda tudo, inclusive vendas/ciclos normais.
+  - **Auto aceitar convite de party + Friend List** — aceita sozinho convite
+    de party comum e de caçada em grupo; lista de nomes separados por
+    vírgula (vazia = aceita de qualquer um), configurável por conta na seção
+    "Party" do painel de Automação.
+  - **Sincroniza Sio (Heal Friend) + ALVO com o Tank da party** — jogando de
+    Elder Druid, configura sozinho o alvo de cura e a estratégia de alvo pro
+    membro com papel "Tank" assim que a party é identificada.
+  - **"Manter a atual"** — responde sozinho "Manter a atual" no diálogo
+    "Seguir o líder da party" (o ALVO já está certo por outro caminho).
+  - **Auto aceitar caçada em grupo**.
+  - Todo clique real dessas features passa por um atraso randômico de
+    200ms-1000ms antes de clicar (mesmo padrão anti-detecção da extensão
+    Chrome) — nunca clique instantâneo.
+  - Os 3 "vigias" (auto aceitar / sync EK / manter atual) rodam sempre,
+    independente de a Automação #1 estar ligada ou não — são conveniência
+    social, não dependem do bot de caçada.
+
 **O que NÃO tem ainda**: expedição da guild com fraqueza elemental,
 painéis de estatísticas tipo "Analisador de caçada" do HunteraFarm
 original, e a coordenação entre contas via Party (PT) — líder manda

@@ -1,9 +1,64 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
+
+/* ---------- tokens (v0.10.0 — identidade "Swag") ----------
+   Tema escuro é o :root. Tema claro sobrescreve via [data-theme="light"]
+   no <html>. Cor de destaque (verdigris/safira/violeta, atributo
+   data-accent mantido como "gold" por compatibilidade com o código
+   existente) via [data-accent] — só troca --accent, os tons derivados
+   (--accent-tint-*) se recalculam sozinhos com color-mix(). Paleta
+   compartilhada com a extensão (huntera-automacao) e o site/PWA. */
+:root {
+  --bg-app: #12140F;
+  --bg-rail: #0D0F0A;
+  --bg-sidebar: #1B1E16;
+  --bg-toolbar: #1B1E16;
+  --bg-button: #242820;
+  --bg-field: #0D0F0A;
+  --bg-inset: #0D0F0A;
+  --bg-hover: #242820;
+  --border-subtle: rgba(233,228,214,0.08);
+  --border-strong: rgba(233,228,214,0.14);
+  --text-primary: #E9E4D6;
+  --text-secondary-strong: #C7C2AF;
+  --text-secondary: #A8A392;
+  --text-muted: #6E6B5E;
+  --accent: #6FA890;
+  --accent-tint-solid: color-mix(in srgb, var(--accent) 20%, var(--bg-app));
+  --accent-tint-bg: color-mix(in srgb, var(--accent) 22%, transparent);
+  --success: #7CB88F;
+  --danger: #D9695C;
+}
+:root[data-theme="light"] {
+  --bg-app: #EEEBDD;
+  --bg-rail: #E3E0D2;
+  --bg-sidebar: #F6F4E9;
+  --bg-toolbar: #F6F4E9;
+  --bg-button: #F6F4E9;
+  --bg-field: #E9E5D5;
+  --bg-inset: #E3E0D2;
+  --bg-hover: #E9E5D5;
+  --border-subtle: rgba(18,20,15,0.08);
+  --border-strong: rgba(18,20,15,0.16);
+  --text-primary: #12140F;
+  --text-secondary-strong: #3A3B30;
+  --text-secondary: #5B5C4E;
+  --text-muted: #8B8875;
+  --accent: #3F7562;
+  --accent-tint-solid: color-mix(in srgb, var(--accent) 15%, #ffffff);
+  --accent-tint-bg: color-mix(in srgb, var(--accent) 15%, #ffffff);
+  --success: #2E7D5B;
+  --danger: #B3453A;
+}
+:root[data-accent="sapphire"] { --accent: #7C93B8; }
+:root[data-theme="light"][data-accent="sapphire"] { --accent: #4A6FA0; }
+:root[data-accent="violet"] { --accent: #A98FC4; }
+:root[data-theme="light"][data-accent="violet"] { --accent: #7A5FA0; }
+
 body {
-  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-  background: #14161d;
-  color: #eceef3;
+  font-family: "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg-app);
+  color: var(--text-primary);
   overflow: hidden;
   font-size: 13px;
 }
@@ -17,9 +72,8 @@ body {
 #iconRail {
   width: 52px;
   flex-shrink: 0;
-  background: #0f111780;
-  background: #0f1117;
-  border-right: 1px solid #23273299;
+  background: var(--bg-rail);
+  border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -29,32 +83,91 @@ body {
 .railBtn {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: 3px;
   border: 1px solid transparent;
   background: transparent;
-  color: #9aa1b3;
+  color: var(--text-secondary);
   font-size: 17px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.railBtn:hover { background: #1e2230; color: #eceef3; }
+.railBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .railBtn.on {
-  background: #3a2c14;
-  border-color: #e0ac4c;
-  color: #e0ac4c;
+  background: var(--accent-tint-solid);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* v0.9.17 — contas na trilha (opção B da proposta). Mantêm as 4 contas à
+   vista mesmo com o menu recolhido, que era o preço que o antigo ☰ cobrava. */
+#railAccounts { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.railAcct { position: relative; padding: 0; }
+.railAcctAv {
+  width: 26px; height: 26px;
+  border-radius: 3px;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 700;
+  color: var(--bg-app);
+}
+.railAcct.active { background: var(--accent-tint-solid); border-color: var(--accent); }
+.railAcctDot {
+  position: absolute;
+  right: 3px; bottom: 3px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  border: 2px solid var(--bg-rail);
+}
+.railAcctDot.on { background: var(--success); }
+.railAcctDot.err { background: var(--danger); }
+
+/* Separador entre grupos de botões da trilha. */
+.railDivider {
+  width: 28px;
+  height: 1px;
+  background: var(--border-subtle);
+  flex-shrink: 0;
+  margin: 2px 0 4px;
+}
+/* v0.7.3 — André: "botão de engrenagem e auto update fica no final da
+   barra na esquerda lá em baixo". Empurra Configurações (⚙️) + o novo botão
+   de checar atualização pro RODAPÉ da trilha, separados dos botões de
+   "trocar de tela" ali em cima (⊞/🤖) — ocupa o espaço sobrando entre os
+   dois grupos, então o rodapé cola sempre embaixo, não importa a altura da
+   janela. */
+.railSpacer { flex: 1; }
+/* Feedback visual de "checando..." — gira o ícone enquanto aguarda a
+   resposta do processo principal (`app:checkForUpdates`), pra não parecer
+   travado num clique que pode levar alguns segundos. */
+#railCheckUpdateBtn.checking { animation: railCheckSpin 0.9s linear infinite; }
+@keyframes railCheckSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* ---------- barra lateral (contas) ---------- */
 #sidebar {
   width: 250px;
   flex-shrink: 0;
-  background: #171a22;
-  border-right: 1px solid #23273299;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
+  transition: width 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
+}
+/* v0.7.1 — André: "faz um botão hamburguer para recolher o menu". Recolhe
+   pra 0 (não só esconde o conteúdo) — dá a tela inteira pro jogo, útil
+   principalmente no modo grade (⊞), onde as 4 contas já competem por
+   espaço. A trilha de ícones (com o próprio ☰) continua sempre visível,
+   então dá sempre pra abrir de volta, mesmo com o menu recolhido. */
+#app.sidebarCollapsed #sidebar {
+  width: 0;
+  border-right-color: transparent;
+  opacity: 0;
+  pointer-events: none;
 }
 
 #sidebarHeader {
@@ -65,27 +178,35 @@ body {
   flex-shrink: 0;
 }
 #brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   font-weight: 600;
-  color: #eceef3;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.brandMark { flex-shrink: 0; display: block; color: var(--accent); }
+.brandName { overflow: hidden; text-overflow: ellipsis; font-family: "Fraunces", Georgia, serif; font-size: 14px; letter-spacing: 0.01em; }
 #addTabBtn {
   width: 24px;
   height: 24px;
-  border-radius: 7px;
-  border: 1px solid #2a2f3d;
-  background: #232733;
-  color: #e0ac4c;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-button);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
   flex-shrink: 0;
 }
-#addTabBtn:hover { border-color: #e0ac4c; }
-#addTabBtn:disabled { opacity: 0.35; cursor: default; border-color: #2a2f3d; }
+#addTabBtn:hover { border-color: var(--accent); }
+#addTabBtn:disabled { opacity: 0.35; cursor: default; border-color: var(--border-strong); }
 
 #accountsGroup {
   flex: 1;
@@ -101,7 +222,7 @@ body {
   gap: 6px;
   background: none;
   border: none;
-  color: #7d8496;
+  color: var(--text-muted);
   font-size: 11px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -124,17 +245,17 @@ body {
 #tabs.collapsed { display: none; }
 
 .acct {
-  border-radius: 9px;
+  border-radius: 3px;
   border-left: 3px solid transparent;
   cursor: pointer;
   position: relative;
 }
-.acct:hover { background: #1e2230; }
+.acct:hover { background: var(--bg-hover); }
 .acct.active {
-  background: #262b3a;
-  border-left-color: #e0ac4c;
+  background: var(--accent-tint-bg);
+  border-left-color: var(--accent);
 }
-.acct.active .acctLabel { color: #e0ac4c; }
+.acct.active .acctLabel { color: var(--accent); }
 
 .acctRow {
   display: flex;
@@ -146,14 +267,14 @@ body {
 .acctAvatar {
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: 3px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
   font-size: 13px;
-  color: #14161d;
+  color: var(--bg-app);
   position: relative;
 }
 .acctStatusDot {
@@ -163,10 +284,10 @@ body {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: #5b6070;
-  border: 2px solid #171a22;
+  background: var(--text-muted);
+  border: 2px solid var(--bg-sidebar);
 }
-.acctStatusDot.online { background: #59c96e; }
+.acctStatusDot.online { background: var(--success); }
 
 .acctInfo {
   flex: 1;
@@ -193,20 +314,20 @@ body {
   margin-left: auto;
   background: none;
   border: none;
-  color: #5b6070;
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 12px;
   padding: 0 2px;
   flex-shrink: 0;
   line-height: 1;
 }
-.acctAutoBtn:hover { color: #eceef3; }
-.acctAutoBtn.on { color: #e0ac4c; }
+.acctAutoBtn:hover { color: var(--text-primary); }
+.acctAutoBtn.on { color: var(--accent); }
 
 .acctClose {
   background: none;
   border: none;
-  color: #7d8496;
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 13px;
   padding: 0 2px;
@@ -214,19 +335,80 @@ body {
   flex-shrink: 0;
 }
 .acct:hover .acctClose { opacity: 0.7; }
-.acctClose:hover { opacity: 1 !important; color: #e0ac4c; }
+.acctClose:hover { opacity: 1 !important; color: var(--accent); }
 
 .acctSubRow {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 10.5px;
-  color: #7d8496;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
 }
-.acctDomain { overflow: hidden; text-overflow: ellipsis; }
-.acctUptime { margin-left: auto; flex-shrink: 0; }
+/* v0.9.16 — estado real da conta no lugar do domínio repetido. A cor faz o
+   trabalho de varredura: verde = rodando, vermelho = precisa de você. */
+.acctStatus {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+}
+.acctStatus.on { color: var(--success); }
+.acctStatus.err { color: var(--danger); font-weight: 600; }
+/* v0.9.16 — vocação + level no lugar do tempo de sessão: identifica o
+   personagem de relance ("ED 357"), que é o que faz escolher a conta certa. */
+.acctVocation {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+/* v0.9.16 — a linha inteira arrasta, então o cursor precisa dizer isso. */
+.acct { cursor: pointer; }
+.acct.dragging { cursor: grabbing; }
+
+/* ---------- reordenar contas por drag-and-drop (v0.9.0) ---------- */
+/* André: "eu quero feature no multi account que eu possa escolher a
+   posição das contas" — arrastar pela alcinha (não a linha inteira, pra
+   não brigar com o label contenteditable / botões de ação). */
+.acctDragHandle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: grab;
+  padding: 2px 1px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  border-radius: 3px;
+}
+.acct:hover .acctDragHandle { opacity: 0.55; }
+.acctDragHandle:hover { opacity: 1 !important; color: var(--text-primary); background: var(--bg-hover); }
+.acctDragHandle:active { cursor: grabbing; }
+
+.acct.dragging { opacity: 0.4; }
+
+.acct.dragOverTop::before,
+.acct.dragOverBottom::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.acct.dragOverTop::before { top: -2px; }
+.acct.dragOverBottom::after { bottom: -2px; }
 
 /* ---------- painel de automação DEDICADO (v0.4.1) ---------- */
 /* André: "horrível onde você deixou o bot" na v0.4.0 (expandia dentro da
@@ -247,70 +429,229 @@ body {
 }
 #automationPanel[hidden] { display: none; }
 
-#automationBackBtn {
+/* v0.11.8 — barras de rolagem nativas dentro do menu lateral (André: "essa
+   barra está totalmente desconexa no layout atual... não pode ter barra de
+   rolagem nessa parte"). Eram duas: a VERTICAL, chumbada do sistema, e uma
+   HORIZONTAL no rodapé do painel — essa segunda existia porque a barra de
+   abas ficou mais larga que o painel e empurrava a largura do bloco inteiro.
+   A horizontal morre na raiz (a barra de abas passou a quebrar em duas
+   linhas) e fica travada aqui; a vertical continua rolando na roda e no
+   trackpad, só não desenha. */
+#automationPanel,
+#settingsPanel,
+#accountsGroup {
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+#automationPanel::-webkit-scrollbar,
+#settingsPanel::-webkit-scrollbar,
+#accountsGroup::-webkit-scrollbar { display: none; }
+
+/* v0.7.0 — painel de Configurações globais (Telegram), mesmo tratamento
+   visual/estrutural do #automationPanel (troca de conteúdo dentro do menu
+   lateral, nunca sobreposto), só que valendo pras 4 contas juntas em vez de
+   uma conta só. */
+#settingsPanel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 16px 16px;
+  display: flex;
+  flex-direction: column;
+}
+#settingsPanel[hidden] { display: none; }
+#settingsBackBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   align-self: flex-start;
   background: none;
   border: none;
-  color: #9aa1b3;
+  color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
   padding: 6px 2px;
   margin-bottom: 8px;
 }
-#automationBackBtn:hover { color: #e0ac4c; }
+#settingsBackBtn:hover { color: var(--accent); }
+.settingsAvatar { background: var(--border-strong); }
+
+.automationScroll {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Seções com título (Caçada / Party / Telegram) — mesma "voz" visual do
+   .automationLogSection (borda em cima + rótulo maiúsculo pequeno), pra não
+   virar uma pilha de campos soltos conforme mais automações entram. */
+.automationGroup {
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+.automationGroup:first-child { padding-top: 0; margin-top: 0; border-top: none; }
+.automationGroupTitle {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  margin: 0 0 12px;
+}
+.fieldHint { color: var(--text-muted); font-weight: 400; text-transform: none; letter-spacing: normal; }
+
+/* v0.9.16 — os textos explicativos eram parágrafos de 5-8 linhas que ocupavam
+   mais altura que todos os controles da aba somados: documentação morando
+   dentro da UI. Agora o resumo fica numa linha e o detalhe abre só quando o
+   usuário quer. */
+.hintMore { margin: 6px 0 0; }
+.hintMore > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 11px;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.hintMore > summary::-webkit-details-marker { display: none; }
+.hintMore > summary::before {
+  content: "?";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+.hintMore > summary:hover { color: var(--text-secondary); }
+.hintMore > summary:hover::before { border-color: var(--accent); color: var(--accent); }
+.hintMore[open] > summary { margin-bottom: 6px; }
+.hintMore p {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.groupSwitchRow { margin: 14px 0 6px; }
+.groupSwitchRow span { color: var(--text-secondary-strong); font-size: 12px; }
+
+.telegramTestBtn { width: 100%; margin-top: 14px; padding: 9px; text-align: center; }
+.telegramTestResult {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  min-height: 14px;
+}
+.telegramTestResult.ok { color: var(--success); }
+.telegramTestResult.err { color: var(--danger); }
+
+/* v0.11.8 — o topo do painel virou UMA linha (voltar + destacar). Antes eram
+   duas linhas de botão único, ~46px de altura pra dois controles pequenos. */
+.automationPanelTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+#automationBackBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 2px;
+  margin-bottom: 0;
+}
+#automationBackBtn:hover { color: var(--accent); }
 
 .automationHeader {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #23273299;
+  gap: 11px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
   margin-bottom: 4px;
 }
 .automationAvatar {
   width: 42px;
   height: 42px;
-  border-radius: 11px;
+  border-radius: 3px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
   font-size: 17px;
-  color: #14161d;
+  color: var(--bg-app);
   flex-shrink: 0;
 }
 .automationHeaderText { min-width: 0; }
 .automationTitle {
-  font-size: 15px;
-  font-weight: 700;
-  color: #eceef3;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* v0.9.16 — o status era 11.5px cinza fraco: a informação mais olhada do
+   painel era a de menor peso visual. Subiu de tamanho, ganhou peso e cor por
+   estado (o texto acompanha o ponto, que antes carregava a cor sozinho). */
 .automationStatusLine {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
-  color: #9aa1b3;
-  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--text-secondary-strong);
+  margin-top: 3px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
 }
+#automationStatusText { overflow: hidden; text-overflow: ellipsis; }
+/* v0.9.16 — ciclos e stamina saíram da linha do status pra cá. Junto com o
+   status em corpo maior, os três não cabiam em 250px e quebravam em três
+   linhas tortas ("· 812 / ciclos / stamina 6h44"). Separados, o status fica
+   com o destaque e os números viram uma legenda discreta embaixo. */
+.automationMetaLine {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.automationStatusLine.on #automationStatusText { color: var(--success); }
+.automationStatusLine.err #automationStatusText { color: var(--danger); }
 .autoDot {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: #5b6070;
+  background: var(--text-muted);
   flex-shrink: 0;
 }
-.autoDot.on { background: #34c77b; }
-.autoDot.err { background: #f0555b; }
-#automationCycles { color: #6c7285; }
-#automationStamina { color: #6c7285; }
+.autoDot.on { background: var(--success); }
+.autoDot.err { background: var(--danger); }
+#automationCycles,
+#automationStamina { color: var(--text-muted); font-weight: 400; }
 
 .automationSection label {
   display: block;
-  color: #8b90a3;
+  color: var(--text-secondary);
   font-size: 11.5px;
   margin: 14px 0 6px;
 }
@@ -320,53 +661,66 @@ body {
   justify-content: space-between;
   margin: 14px 0 6px;
 }
-.autoLabelRow span { color: #8b90a3; font-size: 11.5px; }
+.autoLabelRow span { color: var(--text-secondary); font-size: 11.5px; }
 .autoRefreshBtn {
-  background: #101217;
-  border: 1px solid #2a2f3d;
-  color: #9aa1b3;
-  border-radius: 6px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  border-radius: 3px;
   padding: 3px 8px;
   font-size: 11px;
   cursor: pointer;
 }
-.autoRefreshBtn:hover { color: #eceef3; border-color: #e0ac4c; }
+.autoRefreshBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .automationSection select,
 .automationSection input {
   width: 100%;
-  background: #12141c;
-  border: 1px solid #2a2f3d;
-  border-radius: 8px;
-  color: #eceef3;
+  background: var(--bg-field);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  color: var(--text-primary);
   padding: 9px 10px;
   font-size: 12.5px;
   box-sizing: border-box;
 }
 .automationSection select:focus,
-.automationSection input:focus { border-color: #e0ac4c; outline: none; }
+.automationSection input:focus { border-color: var(--accent); outline: none; }
 
 .autoToggleBtn {
   width: 100%;
   margin-top: 18px;
   padding: 12px;
   border: none;
-  border-radius: 9px;
+  border-radius: 3px;
   font-weight: 700;
   font-size: 12.5px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
 }
-.autoToggleBtn.off { background: #3fda8b; color: #06280f; }
-.autoToggleBtn.on { background: #ff6b70; color: #2b0708; }
+/* v0.9.16 — usava #3fda8b/#ff6b70 fixos, ignorando o tema e os tokens que o
+   resto do app respeita. Agora deriva de --success/--danger. */
+.autoToggleBtn.off { background: var(--success); color: var(--bg-app); }
+.autoToggleBtn.on { background: var(--danger); color: var(--bg-app); }
 .autoToggleBtn:disabled { opacity: 0.5; cursor: default; }
+/* v0.9.30 — o botão vive dentro do painel da aba Caçada, como primeiro filho:
+   o margin-top de 18px acima era pro layout antigo (colado na barra de abas) e
+   aqui deixava um buraco. Quem separa ele do resto é a borda da seção abaixo. */
+#autoTabPanelCacada > .autoToggleBtn { margin-top: 4px; margin-bottom: 2px; }
+
+#automationTabBar,
+#settingsTabBar { margin-top: 16px; }
 
 .automationLogSection {
   margin-top: 20px;
   padding-top: 14px;
-  border-top: 1px solid #23273299;
+  border-top: 1px solid var(--border-subtle);
 }
 .automationLogTitle {
-  color: #6c7285;
+  color: var(--text-muted);
   font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -379,43 +733,132 @@ body {
   gap: 6px;
 }
 .autoLog div {
-  color: #8b90a3;
+  color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.4;
 }
 
+/* v0.9.30 — histórico em duas colunas (hora | mensagem). Antes era uma pilha
+   de parágrafos sem hora, mostrando só 8 linhas numa aba praticamente vazia.
+   Especificidade de classe (0,2,0) pra ganhar do `.autoLog div` (0,1,1) acima,
+   armadilha que já mordeu no `.automationSection label`. */
+.autoLog { gap: 0; }
+.autoLog .logRow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 9px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.autoLog .logRow:last-child { border-bottom: none; }
+.autoLog .logTime {
+  color: var(--text-muted);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.autoLog .logMsg {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.autoLog .logDay {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  padding: 12px 0 5px;
+}
+.autoLog .logDay:first-child { padding-top: 2px; }
+.autoLog .logEmpty {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin: 8px 0 0;
+}
+
 #sidebarFooter {
   flex-shrink: 0;
-  border-top: 1px solid #23273299;
+  border-top: 1px solid var(--border-subtle);
   padding: 10px 12px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+/* v0.9.20 — BUG de especificidade, achado no preview renderizado: o rótulo e
+   o interruptor apareciam empilhados em vez de lado a lado. `.switchRow`
+   (0,1,0) perdia pra `.automationSection label` (0,1,1), que é `display:
+   block`, então TODO switchRow dentro de uma seção da automação virava bloco
+   — incluindo os da aba Party, que já estavam assim antes. Subir a
+   especificidade resolve pros dois. */
+.automationSection label.switchRow,
 .switchRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-size: 12px;
-  color: #c3c8d6;
+  color: var(--text-secondary-strong);
   cursor: pointer;
 }
+/* v0.9.16 — isto era um checkbox NATIVO forçado a 30x16: o controle
+   quadrado esticava e virava um retângulo achatado, com cara de bug. Agora é
+   um toggle de verdade (o input some, o ::before/::after desenham o trilho e
+   a bolinha), no tamanho que a caixa antiga fingia ter. */
 .switchRow input[type="checkbox"] {
-  accent-color: #e0ac4c;
-  width: 30px;
-  height: 16px;
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 32px;
+  height: 18px;
+  flex-shrink: 0;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.switchRow input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transform: translateY(-50%);
+  transition: left 0.15s ease, background 0.15s ease;
+}
+.switchRow input[type="checkbox"]:checked {
+  background: var(--accent-tint-bg);
+  border-color: var(--accent);
+}
+.switchRow input[type="checkbox"]:checked::after {
+  left: 16px;
+  background: var(--accent);
+}
+.switchRow input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 #reloadAllBtn {
-  background: #232733;
-  border: 1px solid #2a2f3d;
-  color: #eceef3;
-  border-radius: 8px;
+  background: var(--bg-button);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  border-radius: 3px;
   padding: 7px 10px;
   font-size: 12px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
-#reloadAllBtn:hover { border-color: #e0ac4c; color: #e0ac4c; }
+#reloadAllBtn:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ---------- área principal ---------- */
 #mainArea {
@@ -431,8 +874,8 @@ body {
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  background: #1b1f2a;
-  border-bottom: 1px solid #2a2f3d;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border-strong);
   flex-shrink: 0;
 }
 #navGroup {
@@ -453,10 +896,10 @@ body {
 .toolBtn {
   width: 28px;
   height: 28px;
-  border-radius: 7px;
-  border: 1px solid #2a2f3d;
-  background: #232733;
-  color: #eceef3;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-button);
+  color: var(--text-primary);
   font-size: 15px;
   cursor: pointer;
   display: flex;
@@ -464,35 +907,35 @@ body {
   justify-content: center;
   flex-shrink: 0;
 }
-.toolBtn:hover:not(:disabled) { border-color: #e0ac4c; color: #e0ac4c; }
+.toolBtn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .toolBtn:disabled { opacity: 0.35; cursor: default; }
 
 #urlBar {
   flex: 1;
   min-width: 0;
-  background: #12141c;
-  border: 1px solid #2a2f3d;
-  border-radius: 7px;
-  color: #c3c8d6;
+  background: var(--bg-field);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  color: var(--text-secondary-strong);
   font-size: 12px;
   padding: 0 10px;
   height: 28px;
   outline: none;
 }
-#urlBar:focus { border-color: #e0ac4c; }
+#urlBar:focus { border-color: var(--accent); }
 
 #urlGoBtn {
-  background: #232733;
-  border: 1px solid #2a2f3d;
-  color: #eceef3;
-  border-radius: 7px;
+  background: var(--bg-button);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  border-radius: 3px;
   padding: 0 12px;
   height: 28px;
   font-size: 12px;
   cursor: pointer;
   flex-shrink: 0;
 }
-#urlGoBtn:hover { border-color: #e0ac4c; color: #e0ac4c; }
+#urlGoBtn:hover { border-color: var(--accent); color: var(--accent); }
 
 .zoomControls {
   display: flex;
@@ -503,20 +946,22 @@ body {
 #zoomLabel {
   min-width: 44px;
   height: 28px;
-  border-radius: 7px;
-  border: 1px solid #2a2f3d;
-  background: #232733;
-  color: #c3c8d6;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-button);
+  color: var(--text-secondary-strong);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   font-size: 11.5px;
   cursor: pointer;
 }
-#zoomLabel:hover { border-color: #e0ac4c; color: #e0ac4c; }
+#zoomLabel:hover { border-color: var(--accent); color: var(--accent); }
 
 #statusPill {
   flex-shrink: 0;
-  background: #232733;
-  border: 1px solid #2a2f3d;
-  color: #9aa1b3;
+  background: var(--bg-button);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
   font-size: 11px;
   padding: 5px 10px;
   border-radius: 999px;
@@ -536,14 +981,600 @@ body {
 }
 #webviewContainer webview.active { display: flex; }
 
+/* v0.7.1 — André: "se o usuário está só com duas, o mostrar várias janelas
+   poderia adequar" — em vez de SEMPRE forçar uma grade 2×2 (que deixa
+   célula(s) vazia(s) sobrando com menos de 4 contas), o layout muda de
+   acordo com quantas contas existem. `renderWebviews()` (renderer.js)
+   decide qual `.count-N` aplicar no container e, com 3 contas, marca qual
+   webview é a "principal" (`.gridSlotMain`) — sempre a conta ATIVA no
+   momento (selecionada na lista), então clicar noutra conta na lista troca
+   qual fica em destaque, mesmo com o modo grade ligado. */
 #webviewContainer.grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
   gap: 2px;
 }
 #webviewContainer.grid webview.gridCell {
   display: flex;
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
+/* 1 conta: ocupa o espaço inteiro (célula única). */
+#webviewContainer.grid.count-1 {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+/* 2 contas — "uma em cima e outra em baixo", em vez de 2×2 com metade vazia. */
+#webviewContainer.grid.count-2 {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+/* 3 contas — "o principal fica em evidência, maior, e os outros dois em
+   baixo de forma dividida". Linha de cima (2fr) = conta ativa, ocupando as
+   2 colunas; linha de baixo (1fr) = as outras duas, uma em cada coluna. */
+#webviewContainer.grid.count-3 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 2fr 1fr;
+  grid-template-areas:
+    "main main"
+    "b    c";
+}
+#webviewContainer.grid.count-3 webview.gridSlotMain { grid-area: main; }
+#webviewContainer.grid.count-3 webview.gridSlotB { grid-area: b; }
+#webviewContainer.grid.count-3 webview.gridSlotC { grid-area: c; }
+/* 4 contas — grade 2×2 igual, célula do mesmo tamanho (comportamento
+   original, sem mudança nesse caso). */
+#webviewContainer.grid.count-4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* ============================================================
+   v0.8.0 — identidade visual: barra de abas, seletor claro/escuro,
+   cor de destaque, densidade da lista de contas. Portado do protótipo
+   do canvas de design (Idle Multiaccount Redesign).
+   ============================================================ */
+
+/* ---------- barra de abas (Caçada/Party/Histórico, Aparência/Contas/Telegram) ---------- */
+.tabBar {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 16px;
+}
+.tabBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 8px 4px 9px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+.tabBtn svg { flex-shrink: 0; }
+/* v0.9.21 — a barra da automação passou a ter QUATRO abas (Caçada, Rotina,
+   Party, Histórico) e, com ícone + rótulo, "Histórico" era cortado em 250px.
+   Nessa barra o rótulo ganha a prioridade: os ícones saem e o texto encolhe
+   um pouco. A barra das Configurações tem três abas e mantém os ícones. */
+#automationTabBar .tabBtn { font-size: 11px; gap: 0; padding-left: 2px; padding-right: 2px; }
+#automationTabBar .tabBtn svg { display: none; }
+/* v0.11.8 — a sexta aba (Treino) não cabe numa linha só, e o último rótulo
+   ficava cortado (mesmo sintoma da v0.9.21, agora sem fonte pra encolher).
+   Rolar na horizontal esconderia uma aba inteira; então a barra QUEBRA em
+   duas linhas. A borda de baixo sai da barra e vira box-shadow, senão ela
+   cortaria a primeira linha de botões. */
+#automationTabBar {
+  flex-wrap: wrap;
+  row-gap: 0;
+  column-gap: 10px;
+  border-bottom: none;
+  box-shadow: inset 0 -1px 0 var(--border-subtle);
+}
+#automationTabBar .tabBtn { flex-shrink: 0; white-space: nowrap; }
+.tabBtn:hover { color: var(--text-primary); }
+.tabBtn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tabPanel[hidden] { display: none; }
+
+/* ---------- controle segmentado (tema, densidade) ---------- */
+.segment {
+  display: flex;
+  background: var(--bg-field);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  padding: 3px;
+  gap: 2px;
+}
+.segBtn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: inherit;
+}
+.segBtn.active { background: var(--bg-sidebar); color: var(--text-primary); box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+:root[data-theme="light"] .segBtn.active { box-shadow: 0 1px 2px rgba(30,34,48,.12); }
+
+/* ---------- seletor de cor de destaque ---------- */
+.accentRow { display: flex; align-items: center; gap: 10px; }
+.accentSwatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  flex-shrink: 0;
+}
+.accentSwatch.active { border-color: var(--text-primary); }
+.accentSwatch.active::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+.accentLabel { font-size: 11px; color: var(--text-muted); margin-right: 2px; }
+.accentSwatch[data-accent="gold"] { background: #6FA890; }
+.accentSwatch[data-accent="sapphire"] { background: #7C93B8; }
+.accentSwatch[data-accent="violet"] { background: #A98FC4; }
+:root[data-theme="light"] .accentSwatch[data-accent="gold"] { background: #3F7562; }
+:root[data-theme="light"] .accentSwatch[data-accent="sapphire"] { background: #4A6FA0; }
+:root[data-theme="light"] .accentSwatch[data-accent="violet"] { background: #7A5FA0; }
+
+/* ---------- densidade da lista de contas ---------- */
+#tabs.density-compact { gap: 1px; }
+#tabs.density-compact .acct { border-radius: 3px; }
+#tabs.density-compact .acct.active { background: transparent; border-left-color: var(--accent); }
+#tabs.density-compact .acctRow { padding: 5px 7px; gap: 7px; }
+#tabs.density-compact .acctAvatar { width: 22px; height: 22px; border-radius: 3px; font-size: 10.5px; }
+#tabs.density-compact .acctSubRow { display: none; }
+#tabs.density-compact .acctLabel { font-size: 12px; }
+
+#tabs.density-dock { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+#tabs.density-dock .acct { border-radius: 3px; border-left: none; flex: 0 0 auto; }
+#tabs.density-dock .acct.active { background: var(--accent-tint-bg); }
+#tabs.density-dock .acctRow { padding: 4px; gap: 0; }
+#tabs.density-dock .acctAvatar { width: 30px; height: 30px; }
+#tabs.density-dock .acctInfo { display: none; }
+/* modo dock é uma grade (wrap), não uma lista vertical — a linha de
+   drop-indicator topo/baixo do drag-and-drop não faz sentido aqui, então
+   a alcinha some e reordenar só fica disponível nos modos lista */
+#tabs.density-dock .acctDragHandle { display: none; }
+
+/* ---------- toggle de tema (ícone sol/lua na trilha) ---------- */
+#railThemeBtn svg { display: block; }
+
+
+/* ---------- v0.9.17 — painel do bot destacado (opção C da proposta) ----------
+   André: "a janela do bot ser flutuante no app". Serve pra mexer na
+   automação SEM tirar o jogo de vista, que hoje é impossível: abrir o painel
+   ocupa a barra inteira. O card é arrastado pela barrinha de cima e a posição
+   fica salva. */
+/* v0.9.17 — o card é posicionado dentro do #mainArea (e NÃO dentro do
+   #webviewContainer): o container das contas vira grid no modo grade, e um
+   filho extra ali dentro viraria uma célula da grade. */
+#mainArea { position: relative; }
+/* `display:flex` abaixo venceria o `[hidden]` do navegador (que é só
+   `display:none` na folha do agente), então o card apareceria mesmo
+   escondido — pegado no preview renderizado. */
+#botFloat[hidden] { display: none; }
+#botFloat {
+  position: absolute;
+  width: 268px;
+  max-height: calc(100% - 24px);
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#botFloatBar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: grab;
+  flex-shrink: 0;
+  /* a barra é a alça de arrasto — selecionar texto nela atrapalharia */
+  user-select: none;
+}
+#botFloatBar.dragging { cursor: grabbing; }
+.botFloatGrip { color: var(--text-muted); letter-spacing: 1px; font-size: 12px; }
+#botFloatTitle {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#botDockBtn {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 3px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+#botDockBtn:hover { color: var(--accent); }
+#botFloatBody { overflow: auto; min-height: 0; }
+/* Destacado, o painel não precisa do "‹ Contas" (a lista já está na barra)
+   nem do botão "Destacar" (já está destacado — o ⇤ da barrinha encaixa). */
+#botFloat #automationBackBtn,
+#botFloat .detachBtn,
+#botFloat .automationPanelTop { display: none; }
+#botFloat #automationPanel { padding: 0 11px 11px; }
+
+.detachBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.detachBtn:hover { color: var(--accent); border-color: var(--accent); }
+
+
+/* ---------- v0.9.20 — personagens do rodízio (checkboxes) ---------- */
+.rotateList { display: flex; flex-direction: column; gap: 2px; }
+/* v0.9.21 — mesma armadilha do `.switchRow` (ver comentário lá): sem subir a
+   especificidade, `.automationSection label` (display:block) vence e o
+   checkbox fica colado no nome, sem o `gap` nem o `margin-left:auto` da
+   etiqueta "agora". Achado no preview renderizado. */
+.automationSection label.rotateItem,
+.rotateItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary-strong);
+  /* sobrescreve o `display:block` de `.automationSection label` */
+  margin: 0;
+}
+.rotateItem:hover { background: var(--bg-hover); }
+.rotateItem input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.rotateItem > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* v0.11.8 — skill de treino por personagem. Nome em cima, select embaixo:
+   com os dois na mesma linha, "Distance Fighting" ao lado de um nome longo
+   não cabe na largura do menu. */
+.trainSkillList { display: flex; flex-direction: column; gap: 10px; }
+.trainSkillItem { display: flex; flex-direction: column; gap: 4px; }
+.trainSkillName {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary-strong);
+  overflow: hidden;
+}
+.trainSkillItem select { margin: 0; }
+
+/* v0.11.12 — progresso da expedição na aba Guild. Mesma linguagem visual da
+   barra do bestiary/expedição do jogo: rótulo, contador e barra. */
+#expedicaoLista { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.expRow { display: flex; flex-direction: column; gap: 4px; }
+.expHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary-strong);
+}
+.expHead b {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.expBar { height: 5px; border-radius: 3px; background: var(--bg-inset); overflow: hidden; }
+.expFill { height: 100%; background: var(--accent); }
+.expRow.expDone .expFill { background: var(--success); }
+.expRow.expDone .expHead { color: var(--text-muted); }
+
+/* v0.11.11 — bloco de lucro real da aba Análise. Linha rótulo/valor, com o
+   valor em tabular-nums pra as colunas baterem. */
+#analyzerEconomia { margin-top: 12px; display: flex; flex-direction: column; }
+.ecoRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.ecoRow:last-child { border-bottom: none; }
+.ecoRow b {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.ecoRow.ecoTotal b { color: var(--success); }
+.ecoRow b.ecoNeg { color: var(--danger); }
+.ecoUp { color: var(--accent); font-style: normal; font-size: 10.5px; }
+.ecoSub {
+  margin-top: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.rotateNow {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-tint-bg);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+
+/* ---------- v0.9.22 — popover de zoom na trilha ----------
+   Substitui a barra de ferramentas do topo, que existia basicamente pra
+   mostrar uma URL que nunca muda (huntera.com.br/game). O que valia a pena
+   manter (zoom da conta ativa e recarregar) veio pra cá: fica ancorado na
+   trilha, que está sempre visível, e não custa altura nenhuma do jogo. */
+#zoomPopover[hidden] { display: none; }
+#zoomPopover {
+  position: absolute;
+  left: 58px;
+  bottom: 96px;
+  z-index: 50;
+  width: 178px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+  padding: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+#zoomPopover .popTitle {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+#zoomPopover .zoomControls { display: flex; align-items: center; gap: 6px; }
+#zoomPopover .zoomControls #zoomLabel {
+  flex: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+#zoomPopover .popAction {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  background: var(--bg-button);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  border-radius: 3px;
+  padding: 7px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+#zoomPopover .popAction:hover { border-color: var(--accent); color: var(--accent); }
+
+/* A pastilha de status desceu pro rodapé do menu junto com a barra. */
+#sidebarFooter #statusPill {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  min-height: 14px;
+}
+
+
+/* ---------- v0.9.23 — analyzer próprio do bot ---------- */
+.statGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.statTile {
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 8px 9px;
+  min-width: 0;
+}
+.statTile b {
+  display: block;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.statTile span {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.statTile em {
+  display: block;
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- v0.11.0 — "dias de uso" (Swag): tela de bloqueio/login ---------- */
+#swagGate {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-app);
+}
+#swagGate[hidden] { display: none; }
+.swagGateCard {
+  width: min(320px, calc(100% - 48px));
+  padding: 32px 28px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--bg-sidebar);
+  text-align: center;
+}
+.swagGateMark { color: var(--accent); display: inline-flex; margin-bottom: 10px; }
+.swagGateTitle {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+}
+.swagGateSubtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+.swagLoginForm { display: flex; flex-direction: column; gap: 4px; text-align: left; }
+.swagLoginForm label {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin: 10px 0 2px;
+}
+.swagLoginForm label:first-child { margin-top: 0; }
+.swagLoginForm input {
+  width: 100%;
+  background: var(--bg-field);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  color: var(--text-primary);
+  padding: 9px 10px;
+  font-size: 12.5px;
+  box-sizing: border-box;
+}
+.swagLoginForm input:focus { border-color: var(--accent); outline: none; }
+#swagLoginBtn {
+  margin-top: 18px;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--bg-app);
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+#swagLoginBtn:hover { background: color-mix(in srgb, var(--accent) 85%, var(--text-primary)); }
+#swagLoginBtn:disabled { opacity: 0.5; cursor: default; }
+.swagGateMessage {
+  margin-top: 16px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.swagGateMessage.err { color: var(--danger); }
+.swagGateMessage.grace { color: var(--success); }
+
+/* Linha de conta logada, no rodapé do menu lateral. */
+.swagAccountRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.swagAccountRow[hidden] { display: none; }
+.swagAccountLabel {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swagLogoutBtn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+.swagLogoutBtn:hover { color: var(--accent); }
+
+.dayList { display: flex; flex-direction: column; gap: 1px; }
+.dayRow {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  grid-template-areas: "quando gold tempo" "quando xp tempo";
+  gap: 0 8px;
+  align-items: center;
+  padding: 6px 7px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.dayRow:nth-child(odd) { background: var(--bg-inset); }
+.dayWhen {
+  grid-area: quando;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.dayGold { grid-area: gold; color: var(--accent); font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; font-variant-numeric: tabular-nums; }
+.dayXp { grid-area: xp; color: var(--text-muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10px; font-variant-numeric: tabular-nums; }
+.dayTime { grid-area: tempo; color: var(--text-muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10px; font-variant-numeric: tabular-nums; }
