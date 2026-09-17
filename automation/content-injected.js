@@ -69,6 +69,11 @@
     // v0.11.33 — tiles DISTINTOS andados desde a última morte, e o perfil
     // aprendido da caçada atual. Ver o bloco "PERFIL DE TILES" abaixo.
     tilesDesdeMorte: new Set(),
+    // v0.11.42 — candidatos a "meu id" vindos do tipo 30, e a trava que
+    // desliga essa fonte assim que aparece mais de um jogador (party).
+    idsDoXp: new Map(),
+    idsDoXpAmbiguos: false,
+    ultimaMorteEm: 0,
     perfilCenario: null, // scenarioId cujo perfil está carregado
     perfilTiles: [], // tiles distintos entre mortes, nesta caçada
     perfilLotes: [], // intervalo entre LOTES de nascimento, nesta caçada
@@ -133,6 +138,11 @@
   const eu = { id: null, nome: null, vocacao: null, level: null, em: 0 };
 
   function euZerar() {
+    // v0.11.42 — outro personagem, outro id: os candidatos do tipo 30 também
+    // são do anterior.
+    spawnWatch.idsDoXp.clear();
+    spawnWatch.idsDoXpAmbiguos = false;
+    spawnWatch.meuId = null;
     eu.id = null;
     eu.nome = null;
     eu.vocacao = null;
@@ -411,6 +421,116 @@
     return [...nomes];
   }
 
+  // v0.11.38 — QUARTA FONTE: a CLASSE do bestiário (tipo 26).
+  //
+  // Bug do André: "Ainda não sei quais criaturas contam para Giants e Restless
+  // Dead e Woodland Folk". Fui atrás e confirmei, nos tipos 33 E 34, que o
+  // protocolo NÃO carrega a lista de criaturas de uma família — só
+  // `{objectiveId, familyId, label, tier, quota, progress}`.
+  //
+  // Mas o tipo 26 traz `monsters[].bestiaryClass`, e existem 14 classes:
+  // Humanoid (25 criaturas), Human (16), Reptile (15), Magical (15), Undead
+  // (13), Vermin (9), Aquatic (6), Mammal (6), Dragon (6), Demon (5), Giant
+  // (4), Plant (4), Lycanthrope (3), Construct (2). Quando o rótulo da
+  // expedição É uma classe, a lista sai inteira e exata: "Giants" → Behemoth,
+  // Cyclops, Ogre Rowdy, Ogre Sage.
+  //
+  // ⚠️ O casamento é EXATO com o nome da classe (aceitando só singular/plural).
+  // Isso não é preciosismo, é o que mantém a fonte honesta: "Trolls" NÃO casa
+  // com classe nenhuma (troll é Humanoid, que tem 25 criaturas) e portanto esta
+  // fonte se cala, deixando o caminho do bestiaryId responder. Casar por
+  // "parecido" mandaria o personagem caçar 25 espécies erradas por horas.
+  //
+  // "Restless Dead" e "Woodland Folk" continuam sem resposta por aqui: são
+  // nomes de família DO HUNTERA, não classes de bestiário. Pra esses, só o
+  // painel de expedição do jogo sabe.
+  // nome da criatura -> { classe, xp, vida }. O tipo 26 é a única fonte dos
+  // três, e chega uma vez por login.
+  const bestiario = new Map();
+
+  function bestiarioClassesLerMensagem(p) {
+    if (!p || !Array.isArray(p.monsters)) return;
+    for (const m of p.monsters) {
+      if (!m || typeof m.name !== "string") continue;
+      bestiario.set(m.name, {
+        classe: typeof m.bestiaryClass === "string" ? m.bestiaryClass : null,
+        xp: Number(m.experience) || 0,
+        vida: Number(m.maxHealth) || 0,
+      });
+    }
+  }
+
+  function criaturasPorClasseDoBestiario(label, familyId) {
+    if (!bestiario.size) return [];
+    const alvos = new Set();
+    for (const bruto of [label, familyId]) {
+      const t = String(bruto || "").trim().toLowerCase().replace(/[-_]+/g, " ");
+      if (!t) continue;
+      alvos.add(t);
+      alvos.add(t.replace(/s$/, "")); // "giants" -> "giant"
+    }
+    const nomes = [];
+    for (const [nome, ficha] of bestiario) {
+      if (!ficha.classe) continue;
+      const c = String(ficha.classe).trim().toLowerCase();
+      if (alvos.has(c)) nomes.push(nome);
+    }
+    return nomes;
+  }
+
+  // v0.11.39 — QUÃO PESADA É ESTA CAÇADA.
+  //
+  // André: "ela entrou em uma caçada muito forte, a expedição preferencialmente
+  // é para ser feita no bicho mais fraco disponível."
+  //
+  // A força de uma caçada é a do monstro MAIS FORTE que mora nela — porque lá
+  // dentro se enfrenta tudo, não só o bicho do objetivo. É o que separa os três
+  // candidatos reais da expedição "Giants": Cyclop Hills tem só Cyclops (xp
+  // 150), Behemoth Quarry tem Behemoth (xp 2.500), e Issavi Steppe tem nove
+  // moradores até Lamassu e Feral Sphinx (xp 9.000). A regra antiga mandava
+  // justamente pra Issavi, porque ela mata DUAS criaturas da família.
+  //
+  // Devolve null quando o tipo 26 ainda não chegou — e aí a ordenação por força
+  // não acontece, em vez de acontecer errado.
+  function forcaDaCacada(hunt) {
+    if (!bestiario.size || !hunt) return null;
+    let pior = null;
+    for (const m of hunt.monsters || []) {
+      const f = m && m.name ? bestiario.get(m.name) : null;
+      if (!f) continue;
+      if (pior === null || f.xp > pior) pior = f.xp;
+    }
+    return pior;
+  }
+
+  // v0.11.40 — FAMÍLIAS QUE O ANDRÉ LEU NO PAINEL E ME PASSOU (15/09/2026).
+  //
+  // Rede pra quando o painel não estiver na tela. Só entra o que ele conferiu
+  // olhando o jogo, e cada nome foi validado contra o catálogo do tipo 26 antes
+  // de ser escrito aqui — "Elf Scout" é a grafia do jogo. Nada de dedução:
+  // esta tabela é testemunho, não inferência.
+  // ✅ CONFERIDO CONTRA O JOGO na captura de 15/09 03:40 — o progresso do
+  // objetivo subiu junto com as mortes, na proporção certa:
+  //   Skeleton: 62 mortes → +64 de progresso, e 17 → +16 (a folga é a guild,
+  //             que também soma; o objetivo é compartilhado).
+  //   Dwarf:    24 mortes → +24.
+  //   Elf + Elf Scout: 19 mortes → +22.
+  // ⚠️ Elf Arcanist NÃO entra, mesmo morando na mesma caçada — confirmado pelo
+  // André no painel e pela conta acima: com ele seriam 26 mortes minhas pra
+  // +22 de progresso, e o progresso nunca pode ser MENOR que as minhas
+  // próprias mortes, já que a guild só soma. (Eu cheguei a concluir o
+  // contrário lendo o tipo 9 errado — ver o aviso sobre mensagens parciais.)
+  const FAMILIAS_CONHECIDAS = {
+    "restless-dead": ["Skeleton", "Ghoul"],
+    "woodland-folk": ["Elf", "Elf Scout", "Dwarf"],
+  };
+
+  function criaturasPorFamiliaConhecida(familyId) {
+    const f = String(familyId || "").trim().toLowerCase();
+    const nomes = FAMILIAS_CONHECIDAS[f];
+    return Array.isArray(nomes) ? nomes.slice() : [];
+  }
+
   function criaturasDoObjetivo(label, familyId) {
     const doDom = criaturasDoObjetivoNoDom(label);
     if (doDom.length) {
@@ -420,7 +540,11 @@
     const mapa = carregarMapaExpedicao();
     const guardado = mapa[String(label || "").trim()];
     if (Array.isArray(guardado) && guardado.length) return guardado;
-    return criaturasPorFamilyId(familyId);
+    const conhecida = criaturasPorFamiliaConhecida(familyId);
+    if (conhecida.length) return conhecida;
+    const porFamilia = criaturasPorFamilyId(familyId);
+    if (porFamilia.length) return porFamilia;
+    return criaturasPorClasseDoBestiario(label, familyId);
   }
 
   // De onde veio a lista — só pra o painel poder ser honesto sobre isso.
@@ -429,22 +553,115 @@
     const mapa = carregarMapaExpedicao();
     const g = mapa[String(label || "").trim()];
     if (Array.isArray(g) && g.length) return "painel (guardado)";
+    if (criaturasPorFamiliaConhecida(familyId).length) return "lista conhecida";
     if (criaturasPorFamilyId(familyId).length) return "catálogo";
+    if (criaturasPorClasseDoBestiario(label, familyId).length) return "classe do bestiário";
     return null;
   }
 
-  function criaturasDoObjetivoNoDom(label) {
-    const tracker = document.querySelector(SEL.expeditionTracker);
-    if (!tracker) return [];
-    for (const row of tracker.querySelectorAll(".expedition-tracker-row")) {
-      const rotulo = row.querySelector(".expedition-tracker-label");
-      if (!rotulo || rotulo.textContent.trim() !== String(label || "").trim()) continue;
-      const nomes = [];
-      for (const b of row.querySelectorAll("button[title]")) {
-        const m = /Mostrar as caçadas onde (.+) aparece/.exec(b.getAttribute("title") || "");
-        if (m) nomes.push(m[1].trim());
+  // v0.11.40 — O PAINEL E O PROTOCOLO NÃO CHAMAM O OBJETIVO PELO MESMO NOME.
+  //
+  // Causa raiz achada no print do André (15/09/2026): o painel do jogo escreve
+  // **"Matar Giants"** e o tipo 33 manda **"Giants"**. A comparação aqui era
+  // exata (`!==`), então NENHUMA linha casava — nunca. Era esse o motivo real
+  // de "Ainda não sei quais criaturas contam para…" mesmo com o painel aberto
+  // na tela; as três fontes de fallback (cache, bestiaryId, classe) existem
+  // porque a fonte AUTORITATIVA estava quebrada por uma diferença de prefixo.
+  //
+  // Agora casa quando o texto do painel É o rótulo, ou TERMINA com ele depois
+  // de um espaço ("matar giants" → "giants"). Comparar por "contém" seria
+  // frouxo demais; exigir o fim garante que "Giants" não case com uma linha
+  // "Giants Mortos na Semana", por exemplo.
+  function mesmoObjetivo(textoDoPainel, label) {
+    const norm = (x) =>
+      String(x || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+    const a = norm(textoDoPainel);
+    const b = norm(label);
+    if (!a || !b) return false;
+    return a === b || a.endsWith(" " + b);
+  }
+
+  // v0.11.41 — LER O PAINEL SEM DEPENDER DE CLASSE NEM DE IDIOMA.
+  //
+  // André: "cada dia é uma expedição diferente, todo dia eu vou ter que te
+  // mandar um print?" Não — e pra que a resposta continue sendo não, esta
+  // leitura não pode quebrar por um nome de classe CSS que mudou nem por uma
+  // frase em português.
+  //
+  // O que ela tinha de frágil, em três camadas:
+  //   1. o container só por `.expedition-tracker`;
+  //   2. a linha só por `.expedition-tracker-row` e o rótulo só por
+  //      `.expedition-tracker-label`;
+  //   3. o nome da criatura só pela frase "Mostrar as caçadas onde X aparece".
+  //
+  // Agora cada camada tem um plano B, e o plano B do nome da criatura é o que
+  // resolve de vez: **o protocolo já me deu os 129 nomes de criatura** (tipo
+  // 26). Então qualquer `title`/`alt`/`aria-label` da linha que seja EXATAMENTE
+  // um nome do catálogo é uma criatura — sem regex, sem idioma, sem chute. Se
+  // o jogo virar inglês ou trocar a frase, continua funcionando.
+  function elementoDoTracker() {
+    const direto = document.querySelector(SEL.expeditionTracker);
+    if (direto) return direto;
+    // Plano B: a classe mudou de nome (expedition-tracker-v2, etc.).
+    return document.querySelector('[class*="expedition"]') || null;
+  }
+
+  function linhasDoTracker(tracker) {
+    const porClasse = tracker.querySelectorAll(".expedition-tracker-row");
+    if (porClasse.length) return [...porClasse];
+    // Plano B: sem a classe conhecida, cada filho direto é uma linha.
+    return [...tracker.children];
+  }
+
+  function textoDoRotulo(row) {
+    const porClasse = row.querySelector(".expedition-tracker-label");
+    if (porClasse) return porClasse.textContent;
+    // Plano B: o texto da própria linha. `mesmoObjetivo` exige que termine no
+    // rótulo, então o progresso ("95/2250") atrapalharia — por isso só a
+    // primeira linha de texto entra.
+    const bruto = String(row.textContent || "").split("\n").map((x) => x.trim()).filter(Boolean)[0];
+    return bruto || "";
+  }
+
+  function nomesDeCriaturaNaLinha(row) {
+    const nomes = [];
+    const vistos = new Set();
+    const guardar = (n) => {
+      const t = String(n || "").trim();
+      if (t && !vistos.has(t)) {
+        vistos.add(t);
+        nomes.push(t);
       }
-      return nomes;
+    };
+    for (const el of row.querySelectorAll("[title], [alt], [aria-label]")) {
+      for (const attr of ["title", "alt", "aria-label"]) {
+        const v = el.getAttribute(attr);
+        if (!v) continue;
+        // Caminho rápido e histórico: a frase do jogo em português.
+        const m = /Mostrar as caçadas onde (.+) aparece/.exec(v);
+        if (m) {
+          guardar(m[1]);
+          continue;
+        }
+        // Caminho à prova de idioma: o valor É um nome de criatura do catálogo.
+        if (bestiario.has(v.trim())) guardar(v);
+      }
+    }
+    return nomes;
+  }
+
+  function criaturasDoObjetivoNoDom(label) {
+    const tracker = elementoDoTracker();
+    if (!tracker) return [];
+    for (const row of linhasDoTracker(tracker)) {
+      if (!row || typeof row.querySelectorAll !== "function") continue;
+      if (!mesmoObjetivo(textoDoRotulo(row), label)) continue;
+      return nomesDeCriaturaNaLinha(row);
     }
     return [];
   }
@@ -505,25 +722,51 @@
   }
 
   // Caçada que mata alguma das criaturas, preferindo a que mata MAIS delas.
+  // v0.11.39 — A EXPEDIÇÃO VAI PRO BICHO MAIS FRACO, NÃO PRO QUE RENDE MAIS
+  // ACERTOS.
+  //
+  // Antes isto escolhia a caçada que mata MAIS criaturas do objetivo. Parecia
+  // eficiente e era o contrário: na expedição "Giants" do André, mandou o
+  // personagem pra Issavi Steppe (Ogre Rowdy + Ogre Sage, dois acertos) em vez
+  // de Cyclop Hills (Cyclops, um acerto) — e Issavi tem Lamassu e Feral Sphinx
+  // morando junto, xp 9.000 contra os 150 do Cyclops. "Entrou numa caçada muito
+  // forte", como ele reportou.
+  //
+  // A regra dele é a certa e ainda é mais rápida: objetivo de expedição conta
+  // MORTE, não dificuldade. Vinte Cyclops morrem no tempo de um Lamassu.
+  //
+  // Ordem: mais fraca primeiro; empate resolve por quem mata mais criaturas do
+  // objetivo. Sem o tipo 26 a força é desconhecida pra todas, e aí a ordenação
+  // por força não acontece — a contagem de acertos volta a decidir, como antes.
+  //
+  // ⚠️ O TIER continua sendo o mais difícil disponível. Não é contradição: a
+  // caçada define QUAIS bichos, o tier define QUANTOS vêm por vez. Mais bicho
+  // fraco por vez é exatamente o que se quer.
   function cacadaParaCriaturas(nomes) {
     if (!nomes || !nomes.length || !guild.cacadas.length) return null;
-    let melhor = null;
-    let melhorQtd = 0;
+    const candidatos = [];
     for (const h of guild.cacadas) {
       const monstros = (h.monsters || []).map((m) => m.name);
       const acertos = nomes.filter((n) => monstros.includes(n)).length;
-      if (acertos > melhorQtd) {
-        melhorQtd = acertos;
-        melhor = h;
-      }
+      if (acertos > 0) candidatos.push({ hunt: h, acertos, forca: forcaDaCacada(h) });
     }
-    if (!melhor) return null;
+    if (!candidatos.length) return null;
+    candidatos.sort((a, b) => {
+      // Quem não tem força conhecida vai pro fim: na dúvida, não é a escolhida.
+      const fa = a.forca === null ? Infinity : a.forca;
+      const fb = b.forca === null ? Infinity : b.forca;
+      if (fa !== fb) return fa - fb;
+      return b.acertos - a.acertos;
+    });
+    const melhor = candidatos[0].hunt;
     const tiers = melhor.tiers || [];
     return {
       nome: melhor.name,
       // André: "todas as expedições devem ser executadas no nível mais
       // difícil". Os tiers vêm na ordem do jogo, então é o último.
       tier: tiers.length ? tiers[tiers.length - 1].name : null,
+      forca: candidatos[0].forca,
+      criaturasAqui: candidatos[0].acertos,
     };
   }
 
@@ -875,6 +1118,18 @@
   const TILES_MIN_AMOSTRAS = 30;
   const TILES_FATOR = 8;
   const TILES_PISO = 25;
+  // v0.11.42 — PISO DE TEMPO, porque tile não é segundo.
+  //
+  // O critério mede ESPAÇO, e num personagem veloz o espaço passa rápido
+  // demais: no log do Amoxicilina (speed alto, com haste) ele cobria 40 tiles
+  // em SEIS segundos, e a simulação mostrou o detector disparando aos 682s —
+  // só que naquele log as criaturas voltaram aos 707s. Sair ali seria trocar
+  // uma pausa de 30s por uma transição de ~11s, à toa.
+  //
+  // Nas capturas em que a saída FOI certa, o disparo veio aos 11s (Dezin) e aos
+  // 18s (Kina). Um piso de 15s preserva as duas — a do Dezin sai 4s mais tarde
+  // — e mata a de 6s. Continua sendo 6x mais rápido que o piso de 90s.
+  const TILES_MIN_SEGUNDOS = 15;
 
   // Lotes: uma amostra a cada 7-20s, então a exigência é menor — e precisa
   // ser, senão o critério não existe nos primeiros minutos.
@@ -961,6 +1216,7 @@
       if (spawnWatch.perfilTiles.length % 20 === 0) gravarPerfil();
     }
     spawnWatch.tilesDesdeMorte.clear();
+    spawnWatch.ultimaMorteEm = Date.now();
   }
 
   // p90, não mediana. A mediana de tiles entre mortes é 0 ou 1 em TODAS as
@@ -976,12 +1232,28 @@
     return percentil90(spawnWatch.perfilTiles, TILES_MIN_AMOSTRAS);
   }
 
+  // v0.11.42 — PERFIL SÓ DE ZEROS NÃO É "CAÇADA APERTADA", É RASTRO MORTO.
+  //
+  // Sem o id do personagem, `registrarPasso` nunca roda, `tilesDesdeMorte` fica
+  // sempre em 0 e o perfil enche de zeros. O p90 então dá 0, o limiar cai no
+  // piso (25) e a comparação `0 >= 25` é falsa pra sempre: o critério existe no
+  // painel e nunca dispara. Foi exatamente o que aconteceu com o Amoxicilina.
+  //
+  // Agora isso é reconhecido pelo que é — "não sei medir" — em vez de virar um
+  // limiar que nunca será alcançado.
+  function rastroMorto() {
+    if (spawnWatch.meuId == null) return true;
+    if (spawnWatch.perfilTiles.length < TILES_MIN_AMOSTRAS) return false;
+    return spawnWatch.perfilTiles.every((x) => x === 0);
+  }
+
   function loteTipicoMs() {
     return percentil90(spawnWatch.perfilLotes, LOTE_MIN_AMOSTRAS);
   }
 
   // Limiar de tiles pra esta caçada, ou null enquanto não houver amostra.
   function limiarDeTiles() {
+    if (rastroMorto()) return null;
     const p90 = tilesTipicos();
     if (p90 === null) return null;
     const fator = Math.max(2, Number(spawnCfg.tilesFactor) || TILES_FATOR);
@@ -1039,7 +1311,15 @@
   // v0.11.21 — entraram 9 (bestiary, pra contar mortes) e 92 (aviso do
   // sistema, que confirma a venda rápida e o desgaste de equipamento).
   // v0.11.22 — entrou 72 (party ao vivo: membros, vocação, stamina, líder).
-  const TIPOS_ESCUTADOS = new Set(["9", "15", "18", "21", "33", "41", "42", "51", "54", "55", "57", "60", "71", "72", "77", "92", "103"]);
+  // v0.11.42 — entrou o 30 (XP daquela morte). Ele é minúsculo
+  // (`{playerId,value}`) e resolve o furo que deixou o detector do Amoxicilina
+  // mudo: é a única fonte do id do personagem que chega DEPOIS do login.
+  //
+  // v0.11.38 — o 26 voltou. Ele saiu na v0.11.35 junto com a capacidade
+  // calculada, que era o único uso dele na época. Agora ele é a ÚNICA fonte de
+  // `bestiaryClass`, que é o que faz a expedição "Giants" saber quais criaturas
+  // contam. Custa um parse de ~224 KB uma vez por login.
+  const TIPOS_ESCUTADOS = new Set(["9", "15", "18", "21", "26", "30", "33", "41", "42", "51", "54", "55", "57", "60", "71", "72", "77", "92", "103"]);
 
   function spawnLerMensagem(texto) {
     // Formato: [tipo, payload]. Filtra ANTES do JSON.parse — isto roda muito
@@ -1049,7 +1329,12 @@
     if (virg < 2 || virg > 5) return;
     const tipo = texto.slice(1, virg);
     if (!TIPOS_ESCUTADOS.has(tipo)) return;
+    const inicioParse = perfDiagnostico.ativo ? perfAgora() : 0;
     const p = JSON.parse(texto)[1];
+    if (inicioParse) {
+      perfDiagnostico.ws.parse++;
+      perfDiagnostico.ws.parseMs += perfAgora() - inicioParse;
+    }
     if (!p) return;
     if (tipo === "15") {
       const c = p.creature;
@@ -1102,6 +1387,33 @@
       }
       return;
     }
+    if (tipo === "30") {
+      // v0.11.42 — TERCEIRA FONTE DO MEU ID, e a que não depende do login.
+      //
+      // No log do Amoxicilina (15/09) o tipo 103 NÃO chegou em 12 minutos — ele
+      // só vem no login, e o gancho tinha instalado depois. Sem id, o rastro de
+      // posição fica morto, o perfil de tiles enche de ZEROS e o detector de
+      // spawn seco vira decoração: teve uma seca de 35s com 211 tiles andados e
+      // 0 criaturas vivas, e nada disparou.
+      //
+      // O tipo 30 (XP daquela morte) traz `playerId` e chega a cada morte —
+      // 488 vezes naquela captura. Em party ele traz o id de QUEM matou, então
+      // a regra se protege sozinha: só aceita quando um ÚNICO id apareceu (3
+      // vezes ou mais). Se um segundo id aparecer, é party, e esta fonte se
+      // cala pra sempre nesta sessão em vez de chutar quem sou eu.
+      if (spawnWatch.meuId == null && p.playerId != null && !spawnWatch.idsDoXpAmbiguos) {
+        const n = (spawnWatch.idsDoXp.get(p.playerId) || 0) + 1;
+        spawnWatch.idsDoXp.set(p.playerId, n);
+        if (spawnWatch.idsDoXp.size > 1) {
+          spawnWatch.idsDoXpAmbiguos = true;
+          spawnWatch.idsDoXp.clear();
+        } else if (n >= 3) {
+          spawnWatch.meuId = p.playerId;
+          eu.id = p.playerId;
+        }
+      }
+      return;
+    }
     if (tipo === "103") {
       if (p.playerId != null) {
         spawnWatch.meuId = p.playerId;
@@ -1148,6 +1460,12 @@
       guildLerMensagem(tipo, p);
       return;
     }
+    if (tipo === "26") {
+      // Só a tabela criatura → classe interessa; ataque, loot e o resto do
+      // catálogo são descartados.
+      bestiarioClassesLerMensagem(p);
+      return;
+    }
     economiaLerMensagem(tipo, p);
   }
 
@@ -1183,7 +1501,84 @@
   const PROTO_MARCA_DIAG = "data-hm-diag"; // interruptor do diagnóstico
   const PROTO_MARCA = "data-hm-proto"; // marca no <html>: o gancho está vivo
 
-  function codigoDoGanchoNaPagina(nomeEvento, tipos, marca, eventoWs, marcaDiag, eventoDiag) {
+  // ================= v0.12.3 — FREIO DO LOOP DE RENDER =================
+  //
+  // André: "se mudarmos o sistema todo para WebSocket, aba minimizada não
+  // renderiza o jogo e fica só troca de mensagens". O objetivo está certo; o
+  // caminho não é possível — o protocolo do Huntera é CRIPTOGRAFADO, e a gente
+  // só lê texto plano porque o gancho pega o `TextDecoder.decode` DEPOIS que o
+  // próprio cliente decifrou, com a chave da sessão dele. Cliente headless
+  // precisaria da chave. (Investigação de 04/09/2026 no CLAUDE.md.)
+  //
+  // Mas o caro nunca foi o socket — é o PHASER. O jogo é Angular + Phaser, e o
+  // Phaser desenha o mundo em canvas/WebGL num loop de `requestAnimationFrame`,
+  // 60 vezes por segundo, por conta. E esse loop É separável do socket.
+  //
+  // COMO, E POR QUE ASSIM: o freio NÃO troca `requestAnimationFrame` por
+  // `setTimeout`. Essa seria a implementação óbvia e seria um TIRO NO PÉ: um
+  // webview escondido (`display:none`) já tem o rAF suspenso pelo Chromium,
+  // enquanto os timers continuam correndo (a v0.4.4 desligou o throttling de
+  // timer de propósito) — trocar um pelo outro faria a conta escondida sair de
+  // 0 fps para 2 fps. Otimização que piora.
+  //
+  // Em vez disso o rAF continua sendo o ÚNICO motor: o freio só ABSORVE
+  // frames, encadeando rAFs vazios e chamando o callback do Phaser de N em N.
+  // Se o Chromium já suspendeu o rAF, o freio não faz nada (e não há nada a
+  // economizar). Se o rAF está correndo, o Phaser passa a desenhar a 2 fps.
+  // Nos dois casos é impossível gastar MAIS do que sem o freio — e é por isso
+  // que essa forma foi escolhida, não a outra.
+  //
+  // O que o freio NÃO toca: WebSocket (orientado a evento), timers (heartbeat),
+  // e o HUD do Angular — que é justamente de onde a automação lê capacidade,
+  // stamina, botões e tracker de expedição. Frear o Phaser não cega o bot.
+  const FREIO_MARCA = "data-hm-freio";
+  // 30 frames absorvidos ≈ 2 desenhos por segundo a 60Hz.
+  const FREIO_PULOS = 30;
+
+  function codigoDoFreioNaPagina(marca) {
+    return `(() => {
+      try {
+        if (window.__hmFreioInstalado) return "ja";
+        window.__hmFreioInstalado = true;
+        const rafNativo = window.requestAnimationFrame.bind(window);
+
+        // Mesmo interruptor do diagnóstico: atributo no <html>, porque o DOM é
+        // o único terreno comum entre o mundo da página e o mundo isolado do
+        // preload. Lido por MutationObserver pra não virar leitura de DOM a
+        // cada frame.
+        let freando = false;
+        const lerFlag = () => {
+          try { freando = document.documentElement.getAttribute(${JSON.stringify(marca)}) === "1"; } catch (e) {}
+        };
+        lerFlag();
+        try {
+          new MutationObserver(lerFlag).observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: [${JSON.stringify(marca)}],
+          });
+        } catch (e) {}
+
+        window.requestAnimationFrame = function (cb) {
+          if (!freando) return rafNativo(cb);
+          let restantes = ${FREIO_PULOS};
+          const passo = (t) => {
+            // Reconfere a cada frame: soltar o freio tem que voltar a 60fps na
+            // hora, não no fim da contagem.
+            if (freando && restantes-- > 0) return rafNativo(passo);
+            cb(t);
+          };
+          return rafNativo(passo);
+        };
+
+        // cancelAnimationFrame continua o nativo de propósito: o id que
+        // devolvemos É um id de rAF de verdade (o do primeiro passo), então
+        // cancelar funciona sem gambiarra de id.
+        return "ok";
+      } catch (e) { return "erro:" + (e && e.message); }
+    })();`;
+  }
+
+  function codigoDoGanchoNaPagina(nomeEvento, tipos, marca, eventoWs, marcaDiag, eventoDiag, marcaPerf, eventoPerf) {
     return `(() => {
       if (window.__hmProtoInstalado) return "ja";
       window.__hmProtoInstalado = true;
@@ -1199,6 +1594,7 @@
       // observado por MutationObserver pra não virar uma leitura de DOM a
       // cada mensagem (são ~20/s por conta).
       let diag = false;
+      let perf = false;
       try {
         const lerFlag = () => {
           try { diag = document.documentElement.getAttribute(${JSON.stringify(marcaDiag)}) === "1"; } catch (e) {}
@@ -1207,6 +1603,14 @@
         new MutationObserver(lerFlag).observe(document.documentElement, {
           attributes: true,
           attributeFilter: [${JSON.stringify(marcaDiag)}],
+        });
+        const lerPerf = () => {
+          try { perf = document.documentElement.getAttribute(${JSON.stringify(marcaPerf)}) === "1"; } catch (e) {}
+        };
+        lerPerf();
+        new MutationObserver(lerPerf).observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: [${JSON.stringify(marcaPerf)}],
         });
       } catch (e) {}
       try {
@@ -1241,13 +1645,35 @@
                 const v = texto.indexOf(",");
                 if (v > 1 && v < 6) {
                   const t = texto.slice(1, v);
+                  // Diagnóstico de performance: atravessa apenas opcode e bytes,
+                  // nunca o payload. Fica desligado por padrão para não criar
+                  // trabalho recorrente durante o uso normal.
+                  if (perf) {
+                    document.dispatchEvent(new CustomEvent(${JSON.stringify(eventoPerf)}, { detail: t + ":" + texto.length }));
+                  }
                   if (TIPOS.has(t)) {
                     document.dispatchEvent(new CustomEvent(${JSON.stringify(nomeEvento)}, { detail: texto }));
                   }
                   // No diagnóstico vai TUDO, inclusive o que a automação não
                   // usa — é justamente o desconhecido que interessa mapear.
+                  //
+                  // v0.12.1 — COM UM TETO. O tipo 88 (terreno) tem ~3 MB POR
+                  // MENSAGEM, e passava inteiro: string de 3 MB clonada pra
+                  // atravessar a fronteira de mundos, guardada inteira no anel
+                  // de eventos enquanto o tipo ainda fosse "raro", e
+                  // descartada logo depois pelo teto de bytes. Era churn de
+                  // GC de megabytes por segundo com o log do protocolo ligado
+                  // — o suficiente pra travar a máquina de quem ligasse.
+                  //
+                  // Acima do teto vai só o começo da mensagem: o tipo continua
+                  // sendo CONTADO no diagnóstico e dá pra ver o formato dele,
+                  // que é tudo que a gente quer do terreno (a decisão de nunca
+                  // parsear o 88 é antiga). 512 KB deixa passar inteiros os
+                  // catálogos do login, que são o motivo do diagnóstico
+                  // existir: o 42 tem 340 KB e o 26 tem 224 KB.
                   if (diag) {
-                    document.dispatchEvent(new CustomEvent(${JSON.stringify(eventoDiag)}, { detail: texto }));
+                    const recorte = texto.length > 524288 ? texto.slice(0, 2000) : texto;
+                    document.dispatchEvent(new CustomEvent(${JSON.stringify(eventoDiag)}, { detail: recorte }));
                   }
                 }
               }
@@ -1283,6 +1709,26 @@
   const DIAG_AMOSTRA_INTEIRA = 2 * 1024 * 1024;
   const DIAG_AMOSTRA_CURTA = 2000;
 
+  // v0.11.37 — SEGUNDO ANEL, SÓ PRO QUE É RARO.
+  //
+  // Achado analisando a captura de 46min do André: o anel de 4.000 mensagens
+  // guardou os ÚLTIMOS 40 SEGUNDOS. Tudo que interessava — a caçada em grupo
+  // montando (tipo 51, entre 26min e 28min), um "declined the team hunt", um
+  // pedido do líder que expirou (139/140 aos 31min) — caiu fora. Uma captura
+  // longa virava um retrato do último minuto.
+  //
+  // A causa é o volume: 21 (movimento), 105 (efeito), 77 (ficha) e 19/20
+  // (vida/dano) fazem ~95% das mensagens e empurram o resto pra fora.
+  //
+  // A saída é um anel separado que guarda só o que é RARO — e "raro" é medido,
+  // não listado à mão: uma mensagem entra aqui enquanto o tipo dela não tiver
+  // passado de EVENTO_TIPO_MAX ocorrências. Tipo tagarela se auto-exclui
+  // depois das primeiras; tipo que acontece 10 vezes numa sessão inteira fica
+  // inteiro. Sem lista pra manter desatualizada.
+  const DIAG_MAX_EVENTOS = 3000;
+  const DIAG_EVENTO_TIPO_MAX = 400; // passou disso, o tipo é tagarela
+  const DIAG_EVENTO_MAX_BYTES = 6 * 1024 * 1024;
+
   const diagnostico = {
     ativo: false,
     inicio: 0,
@@ -1290,7 +1736,142 @@
     tipos: new Map(), // tipo -> {qtd, primeiro, ultimo, amostras[], bytes}
     brutos: [],
     bytes: 0,
+    eventos: [], // o que é raro, preservado da captura inteira
+    eventosBytes: 0,
   };
+
+  // Telemetria temporária de baseline. Os contadores só são atualizados quando
+  // ligados; fora disso, os caminhos quentes continuam sem relógios, IPC extra
+  // ou retenção de payload.
+  const PERF_MARCA = "data-hm-perf";
+  const PERF_EVENTO = "hm:perf-ws";
+  const perfDiagnostico = {
+    ativo: false,
+    inicio: 0,
+    dom: { queries: 0, ms: 0, execucoes: 0, execMs: 0 },
+    ws: { mensagens: 0, parse: 0, parseMs: 0, handlerMs: 0, porOpcode: new Map() },
+    watchers: new Map(),
+  };
+  const perfDomPatches = [];
+
+  function perfInstalarContagemDom() {
+    if (perfDomPatches.length) return;
+    const prototipos = [window.Document && window.Document.prototype, window.Element && window.Element.prototype, window.DocumentFragment && window.DocumentFragment.prototype].filter(Boolean);
+    for (const proto of prototipos) for (const metodo of ["querySelector", "querySelectorAll", "getElementById", "getElementsByClassName", "getElementsByTagName"]) {
+      if (typeof proto[metodo] !== "function") continue;
+      const nativo = proto[metodo];
+      try {
+        proto[metodo] = function (...args) {
+          if (!perfDiagnostico.ativo) return nativo.apply(this, args);
+          const inicio = perfAgora();
+          try { return nativo.apply(this, args); }
+          finally { perfDiagnostico.dom.queries++; perfDiagnostico.dom.ms += perfAgora() - inicio; }
+        };
+        perfDomPatches.push({ proto, metodo, nativo });
+      } catch (err) {}
+    }
+  }
+  function perfRemoverContagemDom() {
+    while (perfDomPatches.length) {
+      const { proto, metodo, nativo } = perfDomPatches.pop();
+      try { proto[metodo] = nativo; } catch (err) {}
+    }
+  }
+
+  function perfAgora() { return performance.now(); }
+  function perfFeatureLigada(feature) {
+    if (feature === "sempre") return true;
+    const cfg = loadState();
+    if (feature === "automação") return !!running;
+    if (feature === "autoAcceptParty") return !!cfg.autoAcceptParty;
+    if (feature === "autoAcceptParty/huntMode") return !!cfg.autoAcceptParty || cfg.huntMode === "group";
+    if (feature === "autoInvitePartyEnabled") return !!cfg.autoInvitePartyEnabled;
+    if (feature === "minimizeGameAnalyzer") return cfg.minimizeGameAnalyzer !== false;
+    if (feature === "autoSellOnCityArrival") return cfg.autoSellOnCityArrival !== false;
+    if (feature === "autoRestartAfterOutage") return cfg.autoRestartAfterOutage !== false;
+    if (feature === "trainOnStaminaZero/trainOnIdleInCity") return !!cfg.trainOnStaminaZero || !!cfg.trainOnIdleInCity;
+    if (feature === "autoResumeSessionEnabled") return !!cfg.autoResumeSessionEnabled;
+    if (feature === "syncEkTarget") return !!cfg.syncEkTarget;
+    if (feature === "autoKeepCurrentTarget") return !!cfg.autoKeepCurrentTarget;
+    return null;
+  }
+  function perfWatcher(nome, intervaloMs, feature, tarefa) {
+    if (!perfDiagnostico.ativo) return tarefa();
+    let reg = perfDiagnostico.watchers.get(nome);
+    if (!reg) {
+      reg = { intervaloMs, feature, execucoes: 0, acoes: 0, domQueries: 0, domMs: 0, domExecucoes: 0, domExecMs: 0, totalMs: 0, activeJsMs: 0, waitingMs: 0, decisionMs: 0 };
+      perfDiagnostico.watchers.set(nome, reg);
+    }
+    reg.execucoes++;
+    reg.featureLigada = perfFeatureLigada(feature);
+    const q0 = perfDiagnostico.dom.queries, r0 = perfDiagnostico.dom.ms;
+    const e0 = perfDiagnostico.dom.execucoes, x0 = perfDiagnostico.dom.execMs;
+    const inicio = perfAgora();
+    let ativoRegistrado = false;
+    let activeMsDaExecucao = 0;
+    const registrarTrabalhoAtivo = () => {
+      if (ativoRegistrado) return;
+      ativoRegistrado = true;
+      const total = perfAgora() - inicio;
+      activeMsDaExecucao = total;
+      const domMs = perfDiagnostico.dom.ms - r0;
+      const execMs = perfDiagnostico.dom.execMs - x0;
+      reg.activeJsMs += total;
+      reg.domQueries += perfDiagnostico.dom.queries - q0;
+      reg.domMs += domMs;
+      reg.domExecucoes += perfDiagnostico.dom.execucoes - e0;
+      reg.domExecMs += execMs;
+      reg.decisionMs += Math.max(0, total - domMs - execMs);
+      if (perfDiagnostico.dom.execucoes > e0) reg.acoes++;
+    };
+    const fim = () => {
+      registrarTrabalhoAtivo();
+      const total = perfAgora() - inicio;
+      reg.totalMs += total; // wall-clock: inclui awaits/sleeps deliberadamente
+      reg.waitingMs += Math.max(0, total - activeMsDaExecucao);
+    };
+    try {
+      const resultado = tarefa();
+      registrarTrabalhoAtivo(); // só JS síncrono; não atribui awaits a CPU
+      if (resultado && typeof resultado.then === "function") return resultado.then((v) => { fim(); return v; }, (e) => { fim(); throw e; });
+      fim();
+      return resultado;
+    } catch (err) { fim(); throw err; }
+  }
+
+  function perfPacote() {
+    const duracaoMs = perfDiagnostico.inicio ? Date.now() - perfDiagnostico.inicio : 0;
+    const porMinuto = (n) => duracaoMs ? Math.round((n * 60000 / duracaoMs) * 100) / 100 : 0;
+    return {
+      gerado: new Date().toISOString(), duracaoMs,
+      dom: { ...perfDiagnostico.dom, queriesPorSegundo: duracaoMs ? Math.round((perfDiagnostico.dom.queries * 1000 / duracaoMs) * 100) / 100 : 0, queriesPorMinuto: porMinuto(perfDiagnostico.dom.queries) },
+      ws: {
+        mensagens: perfDiagnostico.ws.mensagens, parses: perfDiagnostico.ws.parse,
+        mensagensPorSegundo: duracaoMs ? Math.round((perfDiagnostico.ws.mensagens * 1000 / duracaoMs) * 100) / 100 : 0,
+        parsesPorSegundo: duracaoMs ? Math.round((perfDiagnostico.ws.parse * 1000 / duracaoMs) * 100) / 100 : 0,
+        parseMs: perfDiagnostico.ws.parseMs, handlerMs: perfDiagnostico.ws.handlerMs,
+        porOpcode: [...perfDiagnostico.ws.porOpcode.entries()].map(([opcode, r]) => ({ opcode, ...r, mensagensPorSegundo: duracaoMs ? Math.round((r.mensagens * 1000 / duracaoMs) * 100) / 100 : 0 })),
+      },
+      watchers: [...perfDiagnostico.watchers.entries()].map(([watcher, r]) => ({ watcher, ...r, execucoesPorMinuto: porMinuto(r.execucoes), acoesPorMinuto: porMinuto(r.acoes), domReadsPorMinuto: porMinuto(r.domQueries) })),
+      timersAtivos: [...perfDiagnostico.watchers.entries()].map(([watcher, r]) => ({ watcher, intervaloMs: r.intervaloMs, feature: r.feature })),
+    };
+  }
+
+  function perfLigar(ligado) {
+    perfDiagnostico.ativo = !!ligado;
+    if (ligado) {
+      perfDiagnostico.inicio = Date.now();
+      perfDiagnostico.dom = { queries: 0, ms: 0, execucoes: 0, execMs: 0 };
+      perfDiagnostico.ws = { mensagens: 0, parse: 0, parseMs: 0, handlerMs: 0, porOpcode: new Map() };
+      perfDiagnostico.watchers.clear();
+      perfInstalarContagemDom();
+      document.documentElement && document.documentElement.setAttribute(PERF_MARCA, "1");
+    } else {
+      perfRemoverContagemDom();
+      if (document.documentElement) document.documentElement.removeAttribute(PERF_MARCA);
+    }
+    sendState({ perfDiagAtivo: perfDiagnostico.ativo, perfDiagInicio: perfDiagnostico.inicio });
+  }
 
   function diagRegistrar(texto) {
     if (!diagnostico.ativo) return;
@@ -1317,6 +1898,18 @@
     if (reg.amostras.length === 0) reg.amostras.push(texto.slice(0, DIAG_AMOSTRA_INTEIRA));
     else if (reg.amostras.length < 3) reg.amostras.push(texto.slice(0, DIAG_AMOSTRA_CURTA));
 
+    // Enquanto o tipo for raro, a mensagem também vai pro anel de eventos —
+    // que sobrevive à enxurrada de movimento e efeito visual.
+    if (reg.qtd <= DIAG_EVENTO_TIPO_MAX) {
+      diagnostico.eventos.push({ t: agora - diagnostico.inicio, tipo, texto });
+      diagnostico.eventosBytes += texto.length;
+      while (diagnostico.eventos.length > DIAG_MAX_EVENTOS || diagnostico.eventosBytes > DIAG_EVENTO_MAX_BYTES) {
+        const velho = diagnostico.eventos.shift();
+        if (!velho) break;
+        diagnostico.eventosBytes -= velho.texto.length;
+      }
+    }
+
     diagnostico.brutos.push({ t: agora - diagnostico.inicio, tipo, texto });
     diagnostico.bytes += texto.length;
     while (diagnostico.brutos.length > DIAG_MAX_BRUTOS || diagnostico.bytes > DIAG_MAX_BYTES) {
@@ -1335,6 +1928,8 @@
       diagnostico.tipos.clear();
       diagnostico.brutos.length = 0;
       diagnostico.bytes = 0;
+      diagnostico.eventos.length = 0;
+      diagnostico.eventosBytes = 0;
       if (raiz) raiz.setAttribute(PROTO_MARCA_DIAG, "1");
       saveState({ diagEnabled: true });
       log("Diagnóstico do protocolo LIGADO — gravando tudo que o servidor manda nesta conta.");
@@ -1367,6 +1962,9 @@
           amostras: r.amostras,
         })),
       brutos: diagnostico.brutos,
+      // v0.11.37 — o que é raro, da captura INTEIRA (ver o comentário em
+      // `diagnostico`). É aqui que mora a história de uma sessão longa.
+      eventos: diagnostico.eventos,
     };
   }
 
@@ -1388,8 +1986,22 @@
         try {
           spawnWatch.mensagens++;
           spawnWatch.ultimaMensagemEm = Date.now();
+          const inicio = perfDiagnostico.ativo ? perfAgora() : 0;
           spawnLerMensagem(String(ev.detail));
+          if (inicio) perfDiagnostico.ws.handlerMs += perfAgora() - inicio;
         } catch (e) { /* nunca propaga pro jogo */ }
+      });
+
+      document.addEventListener(PERF_EVENTO, (ev) => {
+        if (!perfDiagnostico.ativo) return;
+        try {
+          const [opcode, bytes] = String(ev.detail).split(":");
+          const reg = perfDiagnostico.ws.porOpcode.get(opcode) || { mensagens: 0, bytes: 0 };
+          reg.mensagens++;
+          reg.bytes += Number(bytes) || 0;
+          perfDiagnostico.ws.porOpcode.set(opcode, reg);
+          perfDiagnostico.ws.mensagens++;
+        } catch (e) {}
       });
 
       document.addEventListener(PROTO_EVENTO_WS, (ev) => {
@@ -1412,13 +2024,21 @@
         try { diagRegistrar(String(ev.detail)); } catch (e) {}
       });
 
+      // v0.12.3 — o freio de render vai pela mesma porta: também precisa rodar
+      // no MUNDO DA PÁGINA (o `requestAnimationFrame` que o Phaser usa é o da
+      // página, não o nosso), e o canal `hm:proto-hook` é só um cano pro
+      // `executeJavaScript` do host.
+      sendToHost("hm:proto-hook", codigoDoFreioNaPagina(FREIO_MARCA));
+
       const codigo = codigoDoGanchoNaPagina(
         PROTO_EVENTO,
         [...TIPOS_ESCUTADOS],
         PROTO_MARCA,
         PROTO_EVENTO_WS,
         PROTO_MARCA_DIAG,
-        PROTO_EVENTO_DIAG
+        PROTO_EVENTO_DIAG,
+        PERF_MARCA,
+        PERF_EVENTO
       );
       let tentativas = 0;
       const pedir = () => {
@@ -1749,6 +2369,11 @@
   const RESUME_BACKOFF_MS = [30000, 60000, 3 * 60000, 5 * 60000, 10 * 60000];
   let resumeFalhas = 0;
   let resumeProximaTentativaEm = 0;
+  // Os dois watchers da tela de personagem rodam no mesmo intervalo. Sem este
+  // cache curtíssimo, ambos faziam a mesma consulta de visibilidade no DOM em
+  // cada volta; ele não é uma fonte de estado e expira antes do próximo tick.
+  let listaPersonagensVisivelCache = { em: 0, visivel: false };
+  const LISTA_PERSONAGENS_CACHE_MS = 1000;
   let characterNamePollTimer = null;
   let autoInvitePartyPollTimer = null;
   let lastReportedCharacterName = null;
@@ -2086,10 +2711,44 @@
 
   // ---------- storage: localStorage da própria conta (já isolado) ----------
 
+  // v0.12.1 — CACHE DO ESTADO EM MEMÓRIA.
+  //
+  // André reportou travada na máquina dele, e outros usuários idem. Medindo o
+  // código (não chutando): `loadState()` é chamado em 25 lugares, vários deles
+  // dentro de timers de 1,2s / 1,5s / 4s. Cada chamada era
+  // `localStorage.getItem` + `JSON.parse` do blob INTEIRO do estado — e esse
+  // blob carrega as 120 linhas de log dentro dele. `localStorage` é SÍNCRONO e
+  // vai pro disco, e isso rodava na MESMA thread que desenha o jogo, dentro do
+  // processo do webview. Ou seja: a automação engasgava o render do jogo.
+  //
+  // O cache é seguro porque nesta partição existe UM único escritor desta
+  // chave: todo `setItem` passa por `saveState()` aqui. Comando vindo do painel
+  // do host chega por IPC e também cai aqui. Ainda assim o evento `storage`
+  // invalida o cache, caso algum dia apareça outro contexto escrevendo — custa
+  // nada e evita um bug silencioso de estado velho.
+  //
+  // Devolve CÓPIA RASA de propósito: hoje cada chamada devolvia um objeto novo,
+  // e passar a devolver a mesma referência mudaria a semântica em silêncio se
+  // algum chamador mutasse o resultado. Conferido que ninguém muta hoje, mas a
+  // cópia custa um spread de ~20 chaves contra um parse de dezenas de KB — o
+  // barato aqui é manter a garantia.
+  let estadoCache = null;
+  try {
+    window.addEventListener("storage", (e) => {
+      if (!e || e.key === null || e.key === STORAGE_KEY) estadoCache = null;
+    });
+  } catch (err) {
+    // sem window (teste em sandbox) — o cache segue valendo, só não invalida
+  }
+
   function loadState() {
+    if (estadoCache) return { ...estadoCache };
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return { ...DEFAULT_STATE };
+      if (!raw) {
+        estadoCache = { ...DEFAULT_STATE };
+        return { ...estadoCache };
+      }
       const parsed = JSON.parse(raw);
       const merged = { ...DEFAULT_STATE, ...parsed };
       // v0.9.9 — migração do toggle "Sincronizar venda de loot em grupo"
@@ -2102,20 +2761,68 @@
         merged.huntMode = "group";
       }
       delete merged.syncGroupHuntLoot;
-      return merged;
+      estadoCache = merged;
+      return { ...merged };
     } catch (err) {
       return { ...DEFAULT_STATE };
     }
   }
 
-  function saveState(partial) {
-    const next = { ...loadState(), ...partial };
+  // Escreve o cache no disco AGORA. Separado de `saveState` porque a gravação
+  // do log é adiada (ver `agendarGravacaoDoLog`) e precisa de um ponto único
+  // de descarga — inclusive na saída da página.
+  function gravarEstadoAgora() {
+    if (!estadoCache) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(estadoCache));
     } catch (err) {
       // storage cheio/bloqueado — não trava a automação por causa disso
     }
-    return next;
+  }
+
+  function saveState(partial) {
+    const next = { ...loadState(), ...partial };
+    // Cache primeiro: mesmo se a escrita falhar (storage cheio), quem ler o
+    // estado em seguida tem que ver o valor novo, não o antigo.
+    estadoCache = next;
+    gravarEstadoAgora();
+    return { ...next };
+  }
+
+  // v0.12.1 — ESCRITA DO LOG EM LOTE.
+  //
+  // `log()` fazia `saveState({ log })` por LINHA: read + parse + stringify +
+  // `setItem` síncrono do estado inteiro, com as 120 entradas dentro. São 95
+  // pontos de log no arquivo. Era a gravação em disco mais frequente do app, e
+  // acontecia na thread de render do jogo.
+  //
+  // Agora a linha nova entra no cache NA HORA (quem ler o estado no meio tempo
+  // já vê o log atualizado — nada de leitura suja) e o disco recebe uma
+  // gravação só por janela. Uma rajada de 10 logs seguidos vira 1 escrita em
+  // vez de 10. O `pagehide` descarrega o que estiver pendente, então fechar o
+  // app ou trocar de personagem não perde a última linha.
+  const LOG_GRAVA_DEBOUNCE_MS = 1500;
+  let logGravaTimer = null;
+
+  function agendarGravacaoDoLog() {
+    estadoCache = { ...loadState(), log: logEntries };
+    if (logGravaTimer) return;
+    logGravaTimer = setTimeout(() => {
+      logGravaTimer = null;
+      gravarEstadoAgora();
+    }, LOG_GRAVA_DEBOUNCE_MS);
+  }
+
+  try {
+    window.addEventListener("pagehide", () => {
+      if (logGravaTimer) {
+        clearTimeout(logGravaTimer);
+        logGravaTimer = null;
+      }
+      gravarEstadoAgora();
+    });
+  } catch (err) {
+    // sem window (teste em sandbox) — o lote ainda descarrega pelo timer
   }
 
   // ---------- cache do catálogo de caçadas (v0.9.0) ----------
@@ -2291,6 +2998,8 @@
             tilesAndados: spawnWatch.tilesDesdeMorte.size,
             tilesTipicos: tilesTipicos(),
             tilesLimiar: limiarDeTiles(),
+            tilesSegundos: spawnWatch.ultimaMorteEm ? Math.round((Date.now() - spawnWatch.ultimaMorteEm) / 1000) : null,
+            tilesMinSegundos: TILES_MIN_SEGUNDOS,
             tilesAmostras: spawnWatch.perfilTiles.length,
             tilesMinimo: TILES_MIN_AMOSTRAS,
             loteTipicoMs: loteTipicoMs(),
@@ -2350,14 +3059,6 @@
       // v0.9.16 — vocação + level pra lista de contas.
       characterVocation: getActiveCharacterVocation(),
       characterLevel: getActiveCharacterLevel(),
-      // v0.11.31 — o que o PROTOCOLO sabe deste personagem, separado do que o
-      // DOM mostra. Serve pra ver, no painel, quando a leitura por WebSocket
-      // está de pé e quando ela está cega.
-      protocolo: {
-        nome: eu.nome,
-        vocacao: eu.vocacao, // base ("druid"), não a promovida ("ED")
-        level: eu.level,
-      },
       // v0.9.6 — auto convidar pra party.
       isPartyLeader: cfg.isPartyLeader,
       // v0.11.22 — o que VALE na decisão. Separado do checkbox de propósito:
@@ -2409,21 +3110,25 @@
   }
 
   function setInputValue(input, value) {
+    const inicio = perfDiagnostico.ativo ? perfAgora() : 0;
     const setter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype,
       "value"
     ).set;
     setter.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
+    if (inicio) { perfDiagnostico.dom.execucoes++; perfDiagnostico.dom.execMs += perfAgora() - inicio; }
   }
 
   function setSelectValue(select, value) {
+    const inicio = perfDiagnostico.ativo ? perfAgora() : 0;
     const setter = Object.getOwnPropertyDescriptor(
       window.HTMLSelectElement.prototype,
       "value"
     ).set;
     setter.call(select, value);
     select.dispatchEvent(new Event("change", { bubbles: true }));
+    if (inicio) { perfDiagnostico.dom.execucoes++; perfDiagnostico.dom.execMs += perfAgora() - inicio; }
   }
 
   // v0.7.0 — mesmo padrão anti-detecção da extensão Chrome (pedido do André,
@@ -2440,7 +3145,9 @@
   async function humanClick(el) {
     if (!el) return false;
     await sleep(randomClickDelayMs());
+    const inicio = perfDiagnostico.ativo ? perfAgora() : 0;
     el.click();
+    if (inicio) { perfDiagnostico.dom.execucoes++; perfDiagnostico.dom.execMs += perfAgora() - inicio; }
     return true;
   }
 
@@ -2451,6 +3158,7 @@
   async function humanRightClick(el) {
     if (!el) return false;
     await sleep(randomClickDelayMs());
+    const inicio = perfDiagnostico.ativo ? perfAgora() : 0;
     const rect = el.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
@@ -2458,6 +3166,7 @@
     el.dispatchEvent(new MouseEvent("mousedown", opts));
     el.dispatchEvent(new MouseEvent("mouseup", opts));
     el.dispatchEvent(new MouseEvent("contextmenu", opts));
+    if (inicio) { perfDiagnostico.dom.execucoes++; perfDiagnostico.dom.execMs += perfAgora() - inicio; }
     return true;
   }
 
@@ -2552,7 +3261,9 @@
   // página do jogo.
   function log(message, isError) {
     logEntries = [...logEntries, { message, at: Date.now() }].slice(-LOG_HISTORY_MAX);
-    saveState({ log: logEntries });
+    // v0.12.1 — era `saveState({ log: logEntries })`, uma gravação síncrona em
+    // disco por linha de log. Ver `agendarGravacaoDoLog`.
+    agendarGravacaoDoLog();
     console.log(`[Huntera Multiconta] ${message}`);
     sendState();
     if (ipcRenderer) {
@@ -2633,6 +3344,10 @@
   // jogo — some no seletor de personagens). Usado pra identificar qual das
   // 4 contas mandou cada notificação do Telegram.
   function getActiveCharacterName() {
+    // O protocolo identifica esta conta por id + criatura e este estado é
+    // invalidado na queda do socket/troca de personagem. Quando está fresco,
+    // é a mesma informação do cabeçalho e evita uma consulta DOM recorrente.
+    if (eu.nome && eu.em && Date.now() - eu.em < FICHA_VALIDADE_MS) return eu.nome;
     const el = queryVisible(document, SEL.characterHeaderName);
     if (el) {
       const texto = el.textContent.trim();
@@ -2643,7 +3358,7 @@
     // `eu` é zerado em toda troca de personagem e queda de socket — um nome
     // velho aqui contaminaria atribuição de Telegram, rodízio e liderança de
     // party, que é exatamente o tipo de erro que não aparece no log.
-    return eu.nome || null;
+    return null;
   }
 
   // v0.11.8 — a chave do `trainSkillByCharacter` tem que casar EXATAMENTE com
@@ -3862,11 +4577,36 @@
     }
   }
 
+  // v0.12.1 — FREIO NO OBSERVER DA CAPACIDADE.
+  //
+  // O observer é `subtree: true, characterData: true` no container de
+  // capacidade, e disparava `monitorTick()` a cada mutação, SEM debounce. O HUD
+  // do jogo mexe nesse subtree o tempo todo (vida, mana, cap mudam a cada
+  // tick), então isso virava dezenas de ticks por segundo — e cada tick chama
+  // `isGameUiReady()` → `queryVisible()` → `isVisible()`, que usa
+  // `getComputedStyle` + `getClientRects()`. Isso é LAYOUT SÍNCRONO FORÇADO
+  // dentro do loop de render do jogo: o padrão de livro de frame travado, e o
+  // suspeito número um da travada reportada.
+  //
+  // 400ms colapsa a rajada num tick só e continua imperceptível pro que o
+  // observer existe pra fazer (reagir à capacidade cruzar o limiar) — o poll de
+  // 4s já era o piso aceito pra essa mesma decisão.
+  const OBSERVER_DEBOUNCE_MS = 400;
+  let observerDebounceTimer = null;
+
+  function agendarMonitorTickDoObserver() {
+    if (observerDebounceTimer) return;
+    observerDebounceTimer = setTimeout(() => {
+      observerDebounceTimer = null;
+      perfWatcher("monitor-capacidade-observer", OBSERVER_DEBOUNCE_MS, "automação", monitorTick);
+    }, OBSERVER_DEBOUNCE_MS);
+  }
+
   function tryAttachCapacityObserver() {
     if (observer) return;
     const container = document.querySelector(SEL.capacityContainer);
     if (!container) return;
-    observer = new MutationObserver(() => monitorTick());
+    observer = new MutationObserver(agendarMonitorTickDoObserver);
     observer.observe(container, { childList: true, characterData: true, subtree: true });
   }
 
@@ -3874,8 +4614,10 @@
     stopMonitoring();
     tryAttachCapacityObserver();
     pollTimer = setInterval(() => {
-      tryAttachCapacityObserver();
-      monitorTick();
+      perfWatcher("monitor-capacidade", 4000, "automação", () => {
+        tryAttachCapacityObserver();
+        return monitorTick();
+      });
     }, 4000);
     monitorTick();
   }
@@ -3884,6 +4626,12 @@
     if (observer) {
       observer.disconnect();
       observer = null;
+    }
+    // v0.12.1 — sem isto, um tick já agendado pelo observer dispararia DEPOIS
+    // do monitor ter sido desligado.
+    if (observerDebounceTimer) {
+      clearTimeout(observerDebounceTimer);
+      observerDebounceTimer = null;
     }
     if (pollTimer) {
       clearInterval(pollTimer);
@@ -4066,6 +4814,11 @@
 
   async function tryAutoAcceptGroupHunt() {
     if (isBusy || !licensed) return;
+    // O toggle e o modo são a autorização desta feature. Testá-los antes de
+    // procurar o diálogo evita uma varredura DOM a cada 1,2s em contas que não
+    // usam party, sem alterar o fallback quando a feature está habilitada.
+    const cfg = loadState();
+    if (!cfg.autoAcceptParty && cfg.huntMode !== "group") return;
     // O servidor já disse que não tem nada pra responder — não precisa
     // procurar diálogo nenhum. Só confia no "não" quando o protocolo falou;
     // no silêncio dele, segue varrendo o DOM como antes.
@@ -4083,14 +4836,12 @@
     try {
       await syncEkTargetIfNeeded();
 
-      const cfg = loadState();
       // v0.9.15 — no modo "Em grupo" o convite de caçada é o ÚNICO jeito da
       // conta voltar a caçar, então não pode depender de um toggle de outra
       // aba. Antes, uma conta em modo grupo com "Auto aceitar convite de
       // party" desligado nunca aceitava nada: ela travava esperando, o líder
       // tomava "ninguém aceitou a tempo (60s)" e, com 3 desses, a automação
       // dele se desligava sozinha — tudo sem nenhuma pista na tela.
-      if (!cfg.autoAcceptParty && cfg.huntMode !== "group") return;
       const dialogNow = queryVisible(document, SEL.groupHuntInviteDialog);
       if (!dialogNow) return; // sumiu sozinho enquanto sincronizava (raro)
       const acceptBtn = findButtonByExactText(dialogNow, "Aceitar");
@@ -4120,8 +4871,8 @@
   function startPartyInviteWatcher() {
     if (partyInvitePollTimer) return;
     partyInvitePollTimer = setInterval(() => {
-      tryAutoAcceptParty();
-      tryAutoAcceptGroupHunt();
+      perfWatcher("aceitar-party", 1200, "autoAcceptParty", tryAutoAcceptParty);
+      perfWatcher("aceitar-cacada-grupo", 1200, "autoAcceptParty/huntMode", tryAutoAcceptGroupHunt);
     }, 1200);
   }
 
@@ -4268,7 +5019,7 @@
     // 6s — convidar não é urgente feito aceitar; espaço suficiente pra
     // janela de amigos abrir/fechar/menu sem competir com outros watchers.
     autoInvitePartyPollTimer = setInterval(() => {
-      tryAutoInviteParty();
+      perfWatcher("convidar-party", 6000, "autoInvitePartyEnabled", tryAutoInviteParty);
     }, 6000);
   }
 
@@ -4292,7 +5043,10 @@
   async function tryAutoResumeSession() {
     if (isBusy || !licensed) return;
     let cfg = loadState();
-    if (!queryVisible(document, SEL.characterListItem)) return;
+    // Desligado manualmente significa "não agir"; o fallback de primeiro uso
+    // abaixo continua intacto quando ainda não houve uma escolha manual.
+    if (!cfg.autoResumeSessionEnabled && cfg.autoResumeSessionManuallyDisabled) return;
+    if (!listaDePersonagensEstaVisivel()) return;
 
     // v0.9.4 — André testou a v0.9.3 e continuou parado na tela de seleção:
     // achei o problema — `autoResumeSessionCharacter`/`autoResumeSessionEnabled`
@@ -4582,7 +5336,7 @@
   // de seleção é o ÚNICO lugar onde esses nomes existem no DOM — por isso a
   // lista é guardada em vez de lida sob demanda.
   function harvestCharacterList() {
-    if (!queryVisible(document, SEL.characterListItem)) return;
+    if (!listaDePersonagensEstaVisivel()) return;
     const names = listCharactersOnScreen();
     if (!names.length) return;
     const known = loadState().knownCharacters || [];
@@ -4591,6 +5345,16 @@
     saveState({ knownCharacters: names });
     log(`Personagens desta conta: ${names.join(", ")}.`);
     sendState();
+  }
+
+  function listaDePersonagensEstaVisivel() {
+    const agora = Date.now();
+    if (agora - listaPersonagensVisivelCache.em < LISTA_PERSONAGENS_CACHE_MS) {
+      return listaPersonagensVisivelCache.visivel;
+    }
+    const visivel = !!queryVisible(document, SEL.characterListItem);
+    listaPersonagensVisivelCache = { em: agora, visivel };
+    return visivel;
   }
 
   // v0.9.20 — André: "o venda na cidade só funciona quando o ligar automação
@@ -4678,6 +5442,9 @@
   async function tryMinimizeGameAnalyzer() {
     if (!licensed) return;
     const cfg = loadState();
+    // Se não fomos nós que escondemos nada, o toggle desligado não tem trabalho
+    // pendente. Assim não procura o painel a cada 4s só para concluir "nada".
+    if (cfg.minimizeGameAnalyzer === false && !analyzerMinimizedOnce) return;
     const win = findGameAnalyzerWindow();
     if (!win) {
       analyzerMinimizedOnce = false;
@@ -4691,6 +5458,7 @@
         delete win.dataset.hmHidden;
         log("Analisador de caçada do jogo devolvido (toggle desligado).");
       }
+      analyzerMinimizedOnce = false;
       return;
     }
 
@@ -4711,7 +5479,7 @@
 
   function startAnalyzerWatcher() {
     if (analyzerPollTimer) return;
-    analyzerPollTimer = setInterval(tryMinimizeGameAnalyzer, 4000);
+    analyzerPollTimer = setInterval(() => perfWatcher("minimizar-analisador", 4000, "minimizeGameAnalyzer", tryMinimizeGameAnalyzer), 4000);
   }
 
   // ---------- v0.11.0 — "dias de uso" (Swag) ----------
@@ -4735,7 +5503,7 @@
   function startLicenseWatcher() {
     if (licensePollTimer) return;
     refreshLicenseFlag();
-    licensePollTimer = setInterval(refreshLicenseFlag, 30000);
+    licensePollTimer = setInterval(() => perfWatcher("licenca", 30000, "sempre", refreshLicenseFlag), 30000);
   }
 
   // v0.11.10 — config global do detector de spawn seco. Mesmo padrão do
@@ -4753,7 +5521,7 @@
   function startSpawnConfigWatcher() {
     if (spawnPollTimer) return;
     refreshSpawnConfig();
-    spawnPollTimer = setInterval(refreshSpawnConfig, 30000);
+    spawnPollTimer = setInterval(() => perfWatcher("config-spawn", 30000, "sempre", refreshSpawnConfig), 30000);
   }
 
   // Intervalo TÍPICO entre nascimentos de criatura nesta caçada. Mediana, não
@@ -4800,7 +5568,13 @@
     // saudável e dois trechos secos): dispara nos dois secos, nenhuma vez nos
     // saudáveis, e ~18s depois da última morte em vez dos 90s do piso.
     const limiarTiles = limiarDeTiles();
-    if (limiarTiles !== null && spawnWatch.tilesDesdeMorte.size >= limiarTiles) {
+    const desdeUltimaMorte = spawnWatch.ultimaMorteEm ? Date.now() - spawnWatch.ultimaMorteEm : Infinity;
+    const pisoSegundos = Math.max(5, Number(spawnCfg.tilesMinSeconds) || TILES_MIN_SEGUNDOS);
+    if (
+      limiarTiles !== null &&
+      spawnWatch.tilesDesdeMorte.size >= limiarTiles &&
+      desdeUltimaMorte >= pisoSegundos * 1000
+    ) {
       return {
         motivo: "andou",
         parado: Date.now() - spawnWatch.ultimoSpawnEm,
@@ -4859,6 +5633,7 @@
     // instância, ou seja, toda vez que a automação sai e entra pra renovar o
     // spawn — o detector recomeçaria do zero exatamente depois de agir.
     spawnWatch.tilesDesdeMorte.clear();
+    spawnWatch.ultimaMorteEm = 0;
     spawnWatch.ultimoLoteEm = 0;
     spawnWatch.loteArmado = true;
     gravarPerfil();
@@ -4866,7 +5641,7 @@
 
   function startCitySellWatcher() {
     if (citySellPollTimer) return;
-    citySellPollTimer = setInterval(tryCitySellWhileIdle, 4000);
+    citySellPollTimer = setInterval(() => perfWatcher("venda-na-cidade", 4000, "autoSellOnCityArrival", tryCitySellWhileIdle), 4000);
   }
 
   // ---------- v0.11.9 — religar depois de uma queda ----------
@@ -4911,7 +5686,7 @@
 
   function startRestartWatcher() {
     if (restartPollTimer) return;
-    restartPollTimer = setInterval(restartTick, 10000);
+    restartPollTimer = setInterval(() => perfWatcher("religar-apos-queda", 10000, "autoRestartAfterOutage", restartTick), 10000);
   }
 
   async function restartTick() {
@@ -4989,7 +5764,7 @@
   // Como toda ação real do app, é gateado por `licensed`.
   function startTrainingWatcher() {
     if (trainingPollTimer) return;
-    trainingPollTimer = setInterval(trainingTick, 5000);
+    trainingPollTimer = setInterval(() => perfWatcher("treino", 5000, "trainOnStaminaZero/trainOnIdleInCity", trainingTick), 5000);
   }
 
   async function trainingTick() {
@@ -5083,8 +5858,8 @@
       // v0.9.20 — captura a lista de personagens da conta antes de tentar
       // retomar: é a mesma tela, e assim o painel monta os checkboxes do
       // rodízio sozinho.
-      harvestCharacterList();
-      tryAutoResumeSession();
+      perfWatcher("capturar-lista-personagens", 1500, "sempre", harvestCharacterList);
+      perfWatcher("retomar-sessao", 1500, "autoResumeSessionEnabled", tryAutoResumeSession);
     }, 1500);
   }
 
@@ -5107,6 +5882,7 @@
   function startCharacterNameWatcher() {
     if (characterNamePollTimer) return;
     characterNamePollTimer = setInterval(() => {
+      perfWatcher("identidade-personagem", 3000, "sempre", () => {
       const name = getActiveCharacterName();
       const vocation = getActiveCharacterVocation();
       const level = getActiveCharacterLevel();
@@ -5140,6 +5916,7 @@
         if (Object.keys(patch).length) saveState(patch);
       }
       sendState();
+      });
     }, 3000);
   }
 
@@ -5435,6 +6212,11 @@
 
   async function tryAutoSyncEkTarget() {
     if (isBusy || !licensed) return;
+    // v0.12.1 — a flag é conferida ANTES de pegar a trava. Como estava, este
+    // timer de 1,5s marcava a conta como ocupada a cada disparo mesmo com a
+    // sincronia desligada, e só descobria lá dentro que não tinha nada a fazer
+    // — atravessando o caminho do `monitorTick` de graça.
+    if (!loadState().syncEkTarget) return;
     isBusy = true;
     try {
       await syncEkTargetIfNeeded();
@@ -5445,15 +6227,19 @@
 
   function startEkSyncWatcher() {
     if (ekSyncPollTimer) return;
-    ekSyncPollTimer = setInterval(tryAutoSyncEkTarget, 1500);
+    ekSyncPollTimer = setInterval(() => perfWatcher("sincronizar-ek", 1500, "syncEkTarget", tryAutoSyncEkTarget), 1500);
   }
 
   // Diálogo "Seguir o líder da party" — responde sempre "Manter a atual" (o
   // ALVO já está certo por outro caminho, seguir o líder sobrescreveria sem
   // necessidade). Não depende de vocação nem do bot principal.
   async function tryAutoKeepCurrentTarget() {
-    const cfg = loadState();
-    if (!cfg.autoKeepCurrentTarget || isBusy || !licensed) return;
+    // v0.12.1 — ordem invertida de propósito: `isBusy`/`licensed` são duas
+    // comparações, `loadState()` hoje é cache mas já foi leitura de disco, e
+    // `queryVisible` força layout. Do mais barato pro mais caro, sempre — este
+    // timer roda a cada 1,2s por conta.
+    if (isBusy || !licensed) return;
+    if (!loadState().autoKeepCurrentTarget) return;
     const dialog = queryVisible(document, SEL.followLeaderDialog);
     if (!dialog) return;
     const keepBtn = findButtonByExactText(dialog, "Manter a atual");
@@ -5472,7 +6258,7 @@
 
   function startFollowLeaderWatcher() {
     if (followLeaderPollTimer) return;
-    followLeaderPollTimer = setInterval(tryAutoKeepCurrentTarget, 1200);
+    followLeaderPollTimer = setInterval(() => perfWatcher("manter-alvo-atual", 1200, "autoKeepCurrentTarget", tryAutoKeepCurrentTarget), 1200);
   }
 
   // ---------- leitura de caçadas/tiers (pra alimentar os selects no host) ----------
@@ -5878,6 +6664,15 @@
         // canal do estado, mas SÓ quando pedido.
         sendToHost("hm:diag", diagPacote());
         break;
+      case "perfStart":
+        perfLigar(true);
+        break;
+      case "perfStop":
+        perfLigar(false);
+        break;
+      case "perfSnapshot":
+        sendToHost("hm:perf", perfPacote());
+        break;
       case "setConfig":
         applyConfig(msg.payload || {});
         break;
@@ -5901,6 +6696,20 @@
         break;
       case "resumeGroupHunt":
         await resumeGroupHuntAfterSync();
+        break;
+      // v0.12.3 — freio do loop de render. O host é quem sabe qual conta está
+      // na tela e se a janela do app está minimizada; aqui só se mexe o
+      // interruptor, que é um atributo no <html> (o DOM é compartilhado com o
+      // mundo da página, ver `codigoDoFreioNaPagina`).
+      case "setRenderBrake":
+        try {
+          const raiz = document.documentElement;
+          if (!raiz) break;
+          if (msg.payload && msg.payload.on) raiz.setAttribute(FREIO_MARCA, "1");
+          else raiz.removeAttribute(FREIO_MARCA);
+        } catch (err) {
+          // sem <html> ainda — o host reenvia na próxima troca de conta
+        }
         break;
       case "goToCity": {
         const result = await goToCityNow();

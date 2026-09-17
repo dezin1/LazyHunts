@@ -181,8 +181,7 @@
                  pra saber se ele estava vendo criatura, qual ritmo tinha
                  aprendido, nem quanto faltava pro limiar. Sem isso, "não está
                  legal" não tem como virar diagnóstico. -->
-            <p class="fieldHint spawnLive" id="spawnLive" hidden></p>
-            <p class="fieldHint spawnLive" id="protoLive" hidden></p>
+
 
             <section class="automationSection automationGroup">
               <h4 class="automationGroupTitle">Modo de caçada</h4>
@@ -498,6 +497,50 @@
               </details>
               <p class="fieldHint" id="diagStatus">Desligado.</p>
               <button type="button" class="diagBtn" id="diagDownloadBtn" disabled>Baixar o log</button>
+            </section>
+
+            <!-- v0.11.36 — André: "nada que diga como que a gente faz as coisas
+                 deveria estar visível. no layout para o usuário precisa ser bem
+                 clean". O detector de spawn seco mostrava ritmo de lote, tiles
+                 e contadores de amostra na aba de caçada; isso é ferramenta de
+                 quem desenvolve, não informação de quem joga. Mudou de lugar,
+                 não sumiu: quem abre "Log do protocolo" está investigando. -->
+            <section class="automationSection automationGroup">
+              <h4 class="automationGroupTitle">Detector de spawn seco</h4>
+              <p class="fieldHint" id="spawnLive">Sem dados ainda.</p>
+            </section>
+
+            <!-- v0.12.2 — André mandou o Gerenciador de Tarefas com 2.840 MB e
+                 perguntou onde está o consumo. O Windows soma o app inteiro;
+                 isto separa por processo e diz qual conta é qual, que é a única
+                 forma de decidir o que otimizar sem chutar. -->
+            <section class="automationSection automationGroup">
+              <h4 class="automationGroupTitle">Desempenho</h4>
+              <p class="fieldHint" id="perfLive">Medindo…</p>
+              <label class="switchRow groupSwitchRow">
+                <span>Liberar memória das contas em segundo plano</span>
+                <input type="checkbox" id="perfPurgeToggle" />
+              </label>
+              <details class="hintMore">
+                <summary>O que isso faz.</summary>
+                <p>O Chromium devolve memória ao sistema sozinho quando uma aba fica parada, mas o Swag desliga esse comportamento para o jogo <b>não desconectar</b> com a janela minimizada. Isto pede a devolução na mão, de tempos em tempos, só para as contas que não estão na tela — sem mexer em nada que o jogo enxergue.</p>
+              </details>
+              <button type="button" class="diagBtn" id="perfPurgeNowBtn">Liberar agora</button>
+              <label class="switchRow groupSwitchRow">
+                <span>Diagnóstico de baseline da conta selecionada</span>
+                <input type="checkbox" id="perfDiagToggle" />
+              </label>
+              <p class="fieldHint" id="perfDiagStatus">Desligado. Mede somente enquanto estiver ligado; não grava payloads.</p>
+              <button type="button" class="diagBtn" id="perfDiagDownloadBtn" disabled>Baixar baseline</button>
+              <label class="switchRow groupSwitchRow">
+                <span>Não desenhar as contas que você não está vendo</span>
+                <input type="checkbox" id="renderBrakeToggle" />
+              </label>
+              <details class="hintMore">
+                <summary>O que isso faz.</summary>
+                <p>O jogo desenha o mundo 60 vezes por segundo, em cada conta, mesmo nas que estão fora da tela. Isto reduz o desenho das contas que ninguém está olhando — e de <b>todas</b> quando a janela está minimizada. A conexão, os tempos do jogo e a automação continuam iguais: só o desenho para. Ao voltar para a conta, ela volta ao normal na hora.</p>
+                <p>Se você notar a imagem engasgando ao trocar de conta, desligue aqui.</p>
+              </details>
             </section>
           </div>
 

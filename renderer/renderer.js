@@ -294,6 +294,27 @@ function baixarDiagnostico(tab, pacote) {
   }
 }
 
+async function baixarBaseline(tab, pacote) {
+  if (!pacote) return;
+  try {
+    if (versaoDoApp) pacote.versao = versaoDoApp;
+    // A leitura já existente do Electron entra no mesmo artefato para que o
+    // baseline de DOM/WS e CPU/RAM seja comparável por conta.
+    pacote.cpuRam = await window.hunteraFarm.getPerfMetrics(mapaDeContasParaMedicao()).catch(() => null);
+    const blob = new Blob([JSON.stringify(pacote, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const quem = (tab.label || "conta").replace(/[^\w.-]+/g, "-");
+    const carimbo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.download = `swag-baseline-${quem}-${carimbo}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (err) {}
+}
+
 function sendAutomationCommand(tabId, msg) {
   if (!guestReady.has(tabId)) return;
   const wv = getWebview(tabId);
@@ -407,6 +428,10 @@ function ensureWebview(tab) {
       baixarDiagnostico(tab, (e.args && e.args[0]) || null);
       return;
     }
+    if (e.channel === "hm:perf") {
+      baixarBaseline(tab, (e.args && e.args[0]) || null);
+      return;
+    }
     if (e.channel !== "hm:state") return;
     const prev = automationState.get(tab.id) || {};
     automationState.set(tab.id, { ...prev, ...e.args[0] });
@@ -420,6 +445,7 @@ function ensureWebview(tab) {
     absorbStatsFromState(tab.id, e.args[0] || {});
     updateAutoIndicator(tab.id);
     renderDiagStatus(); // v0.11.19 — contador do log do protocolo
+    renderPerfDiagStatus();
     if (tab.id === selectedAutomationTabId) syncAutomationPanel();
     checkGroupHuntTeamReady(); // v0.9.8
     // v0.9.2 — André: "mostrar o nome do personagem logado e não Conta 1,
@@ -828,6 +854,14 @@ function openSettingsPanel() {
   railSettingsBtn.classList.add("on");
   railAutomationBtn.classList.remove("on");
   syncSettingsPanel();
+  // v0.12.4 — abrir as Configurações é o momento em que alguém vai OLHAR o
+  // número de desempenho; medir aqui garante valor fresco em vez de o que
+  // sobrou do último ciclo.
+  try {
+    renderPerfLive();
+  } catch (err) {
+    // painel ainda não montado — o ciclo de 4s cobre
+  }
 }
 
 function closeSettingsPanel() {
@@ -979,17 +1013,12 @@ function renderExpedicao(state) {
           .map((e) => `<b>${escapeHtml(e.label)}</b>`)
           .join(" e ")}.</p>`
       );
-      // v0.11.27 — diagnóstico em vez de instrução chutada. O painel de
-      // expedição é elemento de HUD, não modal: se ele está na tela e mesmo
-      // assim o mapa falta, mandar "abra o painel" não resolveria nada.
+      // v0.11.36 — a instrução fica; o diagnóstico de DOM que estava aqui
+      // (quantas linhas o painel do jogo tem, quais rótulos, "me manda este
+      // print") saiu. André: "nada que diga como que a gente faz as coisas
+      // deveria estar visível".
       if (tr && tr.presente === false) {
-        linhas.push('<p class="fieldHint">O painel de expedição do jogo não está na tela desta conta. Ele costuma ficar visível pra quem tem guild — se este personagem tem, me avise que eu investigo.</p>');
-      } else if (tr && tr.presente) {
-        linhas.push(
-          `<p class="fieldHint">O painel de expedição <b>está</b> na tela, com ${tr.rotulos.length} linha(s): ${tr.rotulos
-            .map((x) => `${escapeHtml(x.rotulo || "sem rótulo")} (${x.criaturas.length} criatura(s))`)
-            .join(", ") || "nenhuma"}. Se os rótulos acima não batem com os objetivos, o problema é de correspondência de nome — me manda este print.</p>`
-        );
+        linhas.push('<p class="fieldHint">Abra o painel de expedição do jogo uma vez com esta conta — a partir daí funciona sozinho.</p>');
       }
     }
   }
@@ -1078,6 +1107,42 @@ if (diagDownloadBtn) {
     if (tabId) sendAutomationCommand(tabId, { type: "diagDump" });
   });
 }
+
+// Baseline de performance: não captura payload, não muda automação e não fica
+// ligado por acidente. O JSON baixado é por conta, para poder comparar 1 × 4.
+const perfDiagToggle = document.getElementById("perfDiagToggle");
+const perfDiagStatus = document.getElementById("perfDiagStatus");
+const perfDiagDownloadBtn = document.getElementById("perfDiagDownloadBtn");
+
+function renderPerfDiagStatus() {
+  if (!perfDiagStatus) return;
+  const tabId = contaDoDiagnostico();
+  const st = (tabId && automationState.get(tabId)) || {};
+  if (perfDiagToggle) perfDiagToggle.checked = !!st.perfDiagAtivo;
+  if (perfDiagDownloadBtn) perfDiagDownloadBtn.disabled = !st.perfDiagInicio;
+  if (!tabId) {
+    perfDiagStatus.textContent = "Selecione uma conta no painel de automação primeiro.";
+    return;
+  }
+  if (!st.perfDiagAtivo && !st.perfDiagInicio) {
+    perfDiagStatus.textContent = "Desligado. Mede somente enquanto estiver ligado; não grava payloads.";
+    return;
+  }
+  const segundos = Math.max(0, Math.round((Date.now() - st.perfDiagInicio) / 1000));
+  perfDiagStatus.textContent = st.perfDiagAtivo
+    ? `Medindo ${st.characterName || "a conta selecionada"} há ${segundos}s. Baixe o baseline ao terminar.`
+    : "Medição encerrada. Baixe o baseline antes de iniciar outra.";
+}
+
+if (perfDiagToggle) perfDiagToggle.addEventListener("change", () => {
+  const tabId = contaDoDiagnostico();
+  if (!tabId) { perfDiagToggle.checked = false; renderPerfDiagStatus(); return; }
+  sendAutomationCommand(tabId, { type: perfDiagToggle.checked ? "perfStart" : "perfStop" });
+});
+if (perfDiagDownloadBtn) perfDiagDownloadBtn.addEventListener("click", () => {
+  const tabId = contaDoDiagnostico();
+  if (tabId) sendAutomationCommand(tabId, { type: "perfSnapshot" });
+});
 spawnMinSecondsInput.addEventListener("change", () => {
   const n = Number(spawnMinSecondsInput.value);
   if (!Number.isNaN(n) && n >= 30) salvarSpawnConfig({ minSeconds: n });
@@ -1874,7 +1939,7 @@ function renderSpawnLive(state) {
   if (!el) return;
   const s = state && state.spawnVivo;
   if (!s) {
-    el.hidden = true;
+    el.textContent = "Sem dados ainda — o detector só mede com o personagem numa caçada.";
     return;
   }
   const partes = [];
@@ -1892,6 +1957,11 @@ function renderSpawnLive(state) {
   }
   if (s.tilesLimiar) {
     partes.push(`andou ${s.tilesAndados} tiles sem matar (normal ${s.tilesTipicos}, sai com ${s.tilesLimiar})`);
+  } else if (!s.seguindoMeuId) {
+    // v0.11.42 — sem o id do personagem não há rastro, e sem rastro o critério
+    // de tiles não existe. Dizer "aprendendo o mapa" aqui seria mentira: ele
+    // nunca ia aprender.
+    partes.push("rastro de posição indisponível — o critério de tiles está desligado");
   } else {
     partes.push(`aprendendo o mapa (${s.tilesAmostras}/${s.tilesMinimo} mortes)`);
   }
@@ -1901,29 +1971,310 @@ function renderSpawnLive(state) {
   // Se o id do personagem não foi descoberto, o critério da volta está
   // desligado — e isso precisa aparecer, não ficar em silêncio.
   if (!s.seguindoMeuId) partes.push("posição do personagem indisponível");
-  el.textContent = `Spawn: ${partes.join(" · ")}.`;
-  el.hidden = false;
+  el.textContent = `${s.cacada ? s.cacada + ": " : ""}${partes.join(" · ")}.`;
 }
 
-// v0.11.31 — o que a leitura por WebSocket está enxergando deste personagem.
+// ---------- v0.12.2 — DESEMPENHO: medir antes de otimizar ----------
 //
-// Existe pelo mesmo motivo da linha do spawn acima: sem ver, "migrei pro
-// WebSocket" é uma promessa. A capacidade, em particular, é DERIVADA (soma de
-// pesos) e entra em modo de conferência contra o número do jogo — esta linha
-// é onde dá pra ver se ela bateu.
-function renderProtocoloVivo(state) {
-  const el = document.getElementById("protoLive");
+// André mandou o Gerenciador de Tarefas com 3 contas abertas: "Electron (8)",
+// 2.840 MB, 32% de CPU. O Windows soma o app inteiro num número só, e com um
+// número só não dá pra decidir nada — não dá pra saber se o custo está no jogo
+// de cada conta, no processo de vídeo, ou na nossa interface. Sem essa
+// separação, toda otimização daqui pra frente seria chute.
+//
+// A v0.12.1 atacou TRAVADA (jank), que é outra coisa: gravação síncrona em
+// disco e layout forçado dentro da thread que desenha o jogo. Isso não era pra
+// mudar o total de RAM, e não mudou. Este painel existe pra parar de confundir
+// os dois problemas.
+
+const PERF_INTERVALO_MS = 4000;
+const PERF_PURGE_KEY = "hm_perf_purge_v1";
+const PERF_PURGE_INTERVALO_MS = 2 * 60000;
+let perfPurgeUltimoEm = 0;
+let perfPurgeEmAndamento = false;
+
+// Só o renderer sabe qual <webview> é qual conta — o main.js enxerga pids.
+function mapaDeContasParaMedicao() {
+  const mapa = {};
+  for (const tab of tabs) {
+    const wv = getWebview(tab.id);
+    if (!wv) continue;
+    try {
+      const wcId = wv.getWebContentsId();
+      if (wcId) mapa[tab.label || tab.id] = wcId;
+    } catch (err) {
+      // webview ainda anexando — entra na próxima medição
+    }
+  }
+  return mapa;
+}
+
+function rotuloDoProcesso(tipo) {
+  if (tipo === "Browser") return "Núcleo do app";
+  if (tipo === "GPU") return "Vídeo (GPU)";
+  if (tipo === "Utility") return "Serviço interno";
+  if (tipo === "Tab") return "Página sem conta identificada";
+  return tipo || "Outro";
+}
+
+function fmtMb(mb) {
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  return `${mb} MB`;
+}
+
+async function renderPerfLive() {
+  const el = document.getElementById("perfLive");
   if (!el) return;
-  const p = state && state.protocolo;
-  if (!p) {
-    el.hidden = true;
+
+  // v0.12.4 — o painel NUNCA pode ficar mudo. Na v0.12.2 ele ficou "Medindo…"
+  // pra sempre na máquina do André e não havia como saber de onde: preload
+  // velho? handler não registrado? erro no meio? Cada motivo agora tem uma
+  // frase própria. Painel de diagnóstico que não diagnostica a si mesmo é o
+  // mesmo defeito que o detector de spawn seco teve por meses.
+  if (!window.hunteraFarm || typeof window.hunteraFarm.getPerfMetrics !== "function") {
+    el.textContent = "Esta versão do app ainda não tem a medição — feche e abra o Swag de novo.";
     return;
   }
-  const partes = [];
-  partes.push(p.nome ? `personagem "${p.nome}"` : "personagem ainda não identificado");
-  if (p.vocacao) partes.push(`${p.vocacao}${p.level ? ` ${p.level}` : ""}`);
-  el.textContent = `WebSocket: ${partes.join(" · ")}.`;
-  el.hidden = false;
+
+  let r = null;
+  let erro = null;
+  try {
+    r = await window.hunteraFarm.getPerfMetrics(mapaDeContasParaMedicao());
+  } catch (err) {
+    erro = (err && err.message) || String(err);
+  }
+  if (erro) {
+    el.textContent = `Não consegui medir: ${erro}`;
+    return;
+  }
+  if (r && r.erro) {
+    el.textContent = `Não consegui medir: ${r.erro}`;
+    return;
+  }
+  if (!r || !r.processos || !r.processos.length) {
+    el.textContent = "Não consegui medir agora — nenhum processo foi reportado.";
+    return;
+  }
+  const linhas = [
+    `<b>${escapeHtml(fmtMb(r.totalMemoriaMb))}</b> e <b>${r.totalCpu}%</b> de CPU em ${r.processos.length} processos.`,
+  ];
+  for (const p of r.processos) {
+    // Processo de poucos MB é ruído de Chromium, não decisão de otimização.
+    if (p.memoriaMb < 20) continue;
+    const nome = p.conta || rotuloDoProcesso(p.tipo);
+    linhas.push(`${escapeHtml(nome)} — ${escapeHtml(fmtMb(p.memoriaMb))} · ${p.cpu}%`);
+  }
+  el.innerHTML = linhas.join("<br>");
+}
+
+// ---------- liberar memória das contas em segundo plano ----------
+//
+// A v0.4.4 desligou o backgrounding de renderer no app inteiro pra o jogo não
+// desconectar com a janela minimizada. O efeito colateral é que o Chromium
+// também para de fazer o PURGE de memória que ele faria sozinho numa aba
+// parada. Isto pede o purge na mão, só pras contas que não estão na tela.
+//
+// Conta visível nunca entra: purgar o heap de quem está sendo olhado força uma
+// coleta no meio do render.
+function contasParaPurgar() {
+  const ids = [];
+  for (const tab of tabs) {
+    // No modo grade todas estão visíveis — não sobra ninguém pra purgar.
+    if (gridMode) continue;
+    if (tab.id === activeTabId) continue;
+    const wv = getWebview(tab.id);
+    if (!wv) continue;
+    try {
+      const wcId = wv.getWebContentsId();
+      if (wcId) ids.push(wcId);
+    } catch (err) {
+      // ainda anexando
+    }
+  }
+  return ids;
+}
+
+async function perfPurgar(ids) {
+  if (!ids.length || perfPurgeEmAndamento) return null;
+  perfPurgeEmAndamento = true;
+  try {
+    return await window.hunteraFarm.purgeMemory(ids);
+  } catch (err) {
+    return null;
+  } finally {
+    perfPurgeEmAndamento = false;
+    perfPurgeUltimoEm = Date.now();
+  }
+}
+
+function perfPurgeLigado() {
+  try {
+    return localStorage.getItem(PERF_PURGE_KEY) === "1";
+  } catch (err) {
+    return false;
+  }
+}
+
+function iniciarPainelDeDesempenho() {
+  // v0.12.4 — se qualquer coisa aqui estourar, o painel tem que DIZER, não
+  // ficar em "Medindo…". Foi assim que a v0.12.2 falhou em silêncio.
+  try {
+    montarPainelDeDesempenho();
+  } catch (err) {
+    const el = document.getElementById("perfLive");
+    if (el) el.textContent = `A medição não iniciou: ${(err && err.message) || err}`;
+  }
+}
+
+function montarPainelDeDesempenho() {
+  const toggle = document.getElementById("perfPurgeToggle");
+  const botao = document.getElementById("perfPurgeNowBtn");
+  if (toggle) {
+    toggle.checked = perfPurgeLigado();
+    toggle.addEventListener("change", () => {
+      try {
+        localStorage.setItem(PERF_PURGE_KEY, toggle.checked ? "1" : "0");
+      } catch (err) {
+        // localStorage bloqueado — o toggle vale só para esta sessão
+      }
+    });
+  }
+  if (botao) {
+    botao.addEventListener("click", async () => {
+      // No botão manual vale purgar TODAS, inclusive a visível: aqui foi o
+      // usuário que pediu, agora, olhando o número.
+      const ids = [];
+      for (const tab of tabs) {
+        const wv = getWebview(tab.id);
+        if (!wv) continue;
+        try {
+          const wcId = wv.getWebContentsId();
+          if (wcId) ids.push(wcId);
+        } catch (err) {
+          // ainda anexando
+        }
+      }
+      botao.disabled = true;
+      const antes = await window.hunteraFarm.getPerfMetrics(mapaDeContasParaMedicao()).catch(() => null);
+      await perfPurgar(ids);
+      const depois = await window.hunteraFarm.getPerfMetrics(mapaDeContasParaMedicao()).catch(() => null);
+      botao.disabled = false;
+      const el = document.getElementById("perfLive");
+      if (el && antes && depois) {
+        const ganho = antes.totalMemoriaMb - depois.totalMemoriaMb;
+        el.innerHTML =
+          `Liberou <b>${escapeHtml(fmtMb(Math.max(0, ganho)))}</b> ` +
+          `(${escapeHtml(fmtMb(antes.totalMemoriaMb))} → ${escapeHtml(fmtMb(depois.totalMemoriaMb))}).`;
+        // volta pra medição normal na próxima rodada
+        setTimeout(renderPerfLive, PERF_INTERVALO_MS);
+      } else {
+        renderPerfLive();
+      }
+    });
+  }
+
+  // v0.12.4 — mede JÁ. Antes a primeira medição só vinha depois de 4s, e o
+  // painel abria em "Medindo…" mesmo quando tudo funcionava.
+  renderPerfLive();
+
+  setInterval(() => {
+    // v0.12.4 — aqui havia um `el.offsetParent !== null` pra "só medir com a
+    // seção aberta". Foi ele que deixou o painel do André mudo por minutos: a
+    // condição nunca passou naquela máquina, e como ela ficava ANTES da
+    // primeira linha de texto, nada nunca era escrito. Não economizava nada
+    // (uma chamada de IPC a cada 4s) e tinha exatamente um modo de falha —
+    // esse. Otimização que só podia perder: removida.
+    renderPerfLive();
+
+    if (!perfPurgeLigado()) return;
+    if (Date.now() - perfPurgeUltimoEm < PERF_PURGE_INTERVALO_MS) return;
+    perfPurgar(contasParaPurgar());
+  }, PERF_INTERVALO_MS);
+}
+
+// ---------- v0.12.3 — FREIO DO LOOP DE RENDER ----------
+//
+// Ideia do André: "aba minimizada não renderiza o jogo e fica só troca de
+// mensagens". Não dá pra fazer trocando o cliente por um WebSocket direto (o
+// protocolo é criptografado — ver `codigoDoFreioNaPagina` no
+// content-injected.js), mas dá pra fazer o efeito: o caro é o loop do Phaser,
+// e ele é separável do socket.
+//
+// Aqui mora só a DECISÃO de quem freia. O "como" está na página.
+
+const FREIO_KEY = "hm_freio_render_v1";
+let janelaVisivel = true;
+const freioAplicado = new Map(); // tabId -> boolean, pra não reenviar o mesmo comando
+
+function freioLigado() {
+  try {
+    return localStorage.getItem(FREIO_KEY) === "1";
+  } catch (err) {
+    return false;
+  }
+}
+
+// Uma conta é freada quando NINGUÉM está olhando pra ela:
+// - janela minimizada/escondida: ninguém vê nenhuma, nem a selecionada;
+// - modo grade: todas estão na tela, ninguém freia;
+// - modo normal: freia todas menos a selecionada.
+function deveFrear(tabId) {
+  if (!freioLigado()) return false;
+  if (!janelaVisivel) return true;
+  if (gridMode) return false;
+  return tabId !== activeTabId;
+}
+
+function aplicarFreioDeRender() {
+  for (const tab of tabs) {
+    const alvo = deveFrear(tab.id);
+    if (freioAplicado.get(tab.id) === alvo) continue;
+    freioAplicado.set(tab.id, alvo);
+    sendAutomationCommand(tab.id, { type: "setRenderBrake", payload: { on: alvo } });
+  }
+}
+
+// Soltar o freio de todas — usado ao desligar o toggle, pra nenhuma conta
+// ficar presa a 2 fps por causa de um estado antigo.
+function soltarFreioDeTodas() {
+  for (const tab of tabs) {
+    freioAplicado.set(tab.id, false);
+    sendAutomationCommand(tab.id, { type: "setRenderBrake", payload: { on: false } });
+  }
+}
+
+function iniciarFreioDeRender() {
+  const toggle = document.getElementById("renderBrakeToggle");
+  if (toggle) {
+    toggle.checked = freioLigado();
+    toggle.addEventListener("change", () => {
+      try {
+        localStorage.setItem(FREIO_KEY, toggle.checked ? "1" : "0");
+      } catch (err) {
+        // localStorage bloqueado — vale só para esta sessão
+      }
+      if (toggle.checked) aplicarFreioDeRender();
+      else soltarFreioDeTodas();
+    });
+  }
+
+  try {
+    window.hunteraFarm.onAppVisibilityChanged((visivel) => {
+      janelaVisivel = visivel;
+      aplicarFreioDeRender();
+    });
+  } catch (err) {
+    // versão antiga do preload — o freio segue valendo por conta selecionada
+  }
+
+  // Rede de segurança: uma conta que acabou de ficar pronta (ou que recarregou
+  // e perdeu o atributo no <html>) precisa receber o estado atual. O comando é
+  // barato e `freioAplicado` evita reenvio, mas o mapa é limpo aqui de tempos
+  // em tempos pra reconciliar quem recarregou.
+  setInterval(() => {
+    freioAplicado.clear();
+    aplicarFreioDeRender();
+  }, 30000);
 }
 
 function syncAutomationPanel() {
@@ -1931,7 +2282,6 @@ function syncAutomationPanel() {
   if (!tabId) return;
   const state = automationState.get(tabId) || {};
   renderSpawnLive(state);
-  renderProtocoloVivo(state);
 
   automationDotEl.classList.toggle("on", !!state.running || !!state.hunting);
   automationDotEl.classList.toggle("err", state.status === "Erro");
@@ -2215,6 +2565,14 @@ const GRID_COUNT_CLASSES = ["count-1", "count-2", "count-3", "count-4"];
 // promove ela pro destaque, mesmo com o modo grade já ligado (ver CSS,
 // `#webviewContainer.grid.count-3`).
 function renderWebviews() {
+  // v0.12.3 — trocar de conta ou entrar/sair do modo grade muda quem está
+  // sendo visto, e portanto quem deve ficar com o render freado. Este é o
+  // único ponto por onde as duas coisas passam.
+  try {
+    aplicarFreioDeRender();
+  } catch (err) {
+    // ainda inicializando — a rede de segurança de 30s reconcilia
+  }
   containerEl.classList.toggle("grid", gridMode);
   containerEl.classList.remove(...GRID_COUNT_CLASSES);
   if (gridMode && tabs.length) {
@@ -3106,6 +3464,10 @@ async function init() {
   renderWebviews();
   applyZoomToAll();
   updateToolbarState();
+  // v0.12.2 — painel de desempenho (medição + purge das contas em segundo plano).
+  iniciarPainelDeDesempenho();
+  // v0.12.3 — freio do loop de render das contas que ninguém está vendo.
+  iniciarFreioDeRender();
   statusPill.textContent = statusPillDefaultText();
   setInterval(() => {
     updateUptimeLabels();
