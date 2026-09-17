@@ -166,6 +166,16 @@
     );
   }
 
+  function motivoFallbackIdentidadeWs() {
+    if (socketJogo.estado !== "aberto") return "socket-nao-aberto";
+    if (!socketJogo.sessao) return "socket-sem-geracao";
+    if (!eu.confirmadoPor103) return "sem-103";
+    if (eu.sessao !== socketJogo.sessao) return "geracao-divergente";
+    if (eu.id == null) return "sem-playerId";
+    if (!eu.nome) return "sem-15-correspondente";
+    return null;
+  }
+
   // v0.11.35 — A CAPACIDADE CALCULADA FOI REMOVIDA (decisão do André).
   //
   // A v0.11.31 reconstruía o peso carregado (tipo 74 + tipo 55) pra derivar a
@@ -5993,7 +6003,11 @@
     if (characterNamePollTimer) return;
     characterNamePollTimer = setInterval(() => {
       perfWatcher("identidade-personagem", 3000, "sempre", () => {
+      const domQueriesBefore = perfDiagnostico.dom.queries;
+      const wsIdentityValid = identidadeWsConfirmada();
+      const motivoFallback = wsIdentityValid ? null : motivoFallbackIdentidadeWs();
       const name = getActiveCharacterName();
+      const domQueriesDepoisNome = perfDiagnostico.dom.queries;
       const vocation = getActiveCharacterVocation();
       const level = getActiveCharacterLevel();
       // v0.9.23 — acumula XP a cada tick (antes da checagem de mudança, senão
@@ -6024,6 +6038,27 @@
           patch.autoResumeSessionEnabled = true;
         }
         if (Object.keys(patch).length) saveState(patch);
+      }
+      // Temporário: separa a leitura do nome das demais responsabilidades
+      // deste watcher (vocação, level e XP) sem alterar sua execução.
+      if (perfDiagnostico.ativo) {
+        const reg = perfDiagnostico.watchers.get("identidade-personagem");
+        if (reg) {
+          const amostras = reg.amostrasIdentidade || (reg.amostrasIdentidade = []);
+          amostras.push({
+            wsIdentityValid,
+            socketGeneration: socketJogo.sessao,
+            identityGeneration: eu.sessao,
+            socketState: socketJogo.estado,
+            playerId: eu.id,
+            nome: eu.nome,
+            domQueriesBefore,
+            domQueriesAfterName: domQueriesDepoisNome,
+            domQueriesAfter: perfDiagnostico.dom.queries,
+            motivoFallback,
+          });
+          if (amostras.length > 30) amostras.shift();
+        }
       }
       sendState();
       });
