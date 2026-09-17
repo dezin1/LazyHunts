@@ -1339,6 +1339,11 @@
     if (tipo === "15") {
       const c = p.creature;
       if (!c) return;
+      if (c.kind === "player") {
+        perfRegistrarTroca("ws:15", {
+          jogador: { id: c.id == null ? null : c.id, nome: typeof c.name === "string" ? c.name : null },
+        });
+      }
       if (c.kind === "monster") {
         spawnRegistrarNascimento(c.name, c.id);
         return;
@@ -1419,14 +1424,23 @@
         spawnWatch.meuId = p.playerId;
         eu.id = p.playerId;
       }
+      perfRegistrarTroca("ws:103", { playerId: p.playerId == null ? null : p.playerId });
       return;
     }
     if (tipo === "54") {
       mundoLerMensagem(p);
+      perfRegistrarTroca("ws:54", {
+        instanceId: typeof p.instanceId === "string" ? p.instanceId : null,
+        scenarioId: typeof p.scenarioId === "string" ? p.scenarioId : null,
+      });
       return;
     }
     if (tipo === "77") {
       fichaLerMensagem(p);
+      perfRegistrarTroca("ws:77", {
+        level: typeof p.level === "number" ? p.level : null,
+        staminaMs: typeof p.staminaMs === "number" ? p.staminaMs : null,
+      });
       return;
     }
     if (tipo === "71") {
@@ -1751,8 +1765,68 @@
     dom: { queries: 0, ms: 0, execucoes: 0, execMs: 0 },
     ws: { mensagens: 0, parse: 0, parseMs: 0, handlerMs: 0, porOpcode: new Map() },
     watchers: new Map(),
+    trocaPersonagem: { eventos: [], observer: null, verificarAgendado: false, ultimaTela: null },
   };
   const perfDomPatches = [];
+
+  // Investigação temporária da troca manual: registra somente a ordem dos
+  // fatos que podem substituir o TTL da identidade. Não guarda payloads e só
+  // observa o DOM enquanto o diagnóstico de baseline está ligado.
+  const PERF_TROCA_EVENTOS_MAX = 200;
+  function perfResumoIdentidade() {
+    return { id: eu.id, nome: eu.nome, em: eu.em || null };
+  }
+  function perfRegistrarTroca(tipo, dados) {
+    if (!perfDiagnostico.ativo) return;
+    const eventos = perfDiagnostico.trocaPersonagem.eventos;
+    eventos.push({
+      t: Date.now() - perfDiagnostico.inicio,
+      tipo,
+      socket: socketJogo.estado,
+      identidade: perfResumoIdentidade(),
+      ...(dados || {}),
+    });
+    if (eventos.length > PERF_TROCA_EVENTOS_MAX) eventos.shift();
+  }
+  function perfLerTelaDeTroca() {
+    const cabecalho = document.querySelector(SEL.characterHeaderName);
+    const lista = document.querySelector(SEL.characterListItem);
+    const nome = cabecalho && String(cabecalho.textContent || "").trim();
+    return { tela: nome ? "jogo" : lista ? "lista-personagens" : "transicao", nome: nome || null };
+  }
+  function perfVerificarTelaDeTroca() {
+    perfDiagnostico.trocaPersonagem.verificarAgendado = false;
+    if (!perfDiagnostico.ativo) return;
+    const tela = perfLerTelaDeTroca();
+    const assinatura = `${tela.tela}:${tela.nome || ""}`;
+    if (assinatura === perfDiagnostico.trocaPersonagem.ultimaTela) return;
+    perfDiagnostico.trocaPersonagem.ultimaTela = assinatura;
+    perfRegistrarTroca("dom:tela", tela);
+  }
+  function perfIniciarObservacaoDeTroca() {
+    perfPararObservacaoDeTroca();
+    perfDiagnostico.trocaPersonagem.ultimaTela = null;
+    perfVerificarTelaDeTroca();
+    try {
+      const observer = new MutationObserver(() => {
+        if (perfDiagnostico.trocaPersonagem.verificarAgendado) return;
+        perfDiagnostico.trocaPersonagem.verificarAgendado = true;
+        // Muitas mutações compõem a mesma transição Angular; uma leitura após
+        // 150 ms registra o estado assentado sem virar consulta contínua.
+        setTimeout(perfVerificarTelaDeTroca, 150);
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+      perfDiagnostico.trocaPersonagem.observer = observer;
+    } catch (err) {}
+  }
+  function perfPararObservacaoDeTroca() {
+    const troca = perfDiagnostico.trocaPersonagem;
+    if (troca.observer) {
+      try { troca.observer.disconnect(); } catch (err) {}
+    }
+    troca.observer = null;
+    troca.verificarAgendado = false;
+  }
 
   function perfInstalarContagemDom() {
     if (perfDomPatches.length) return;
@@ -1854,6 +1928,7 @@
       },
       watchers: [...perfDiagnostico.watchers.entries()].map(([watcher, r]) => ({ watcher, ...r, execucoesPorMinuto: porMinuto(r.execucoes), acoesPorMinuto: porMinuto(r.acoes), domReadsPorMinuto: porMinuto(r.domQueries) })),
       timersAtivos: [...perfDiagnostico.watchers.entries()].map(([watcher, r]) => ({ watcher, intervaloMs: r.intervaloMs, feature: r.feature })),
+      trocaPersonagem: { eventos: perfDiagnostico.trocaPersonagem.eventos.slice() },
     };
   }
 
@@ -1864,10 +1939,13 @@
       perfDiagnostico.dom = { queries: 0, ms: 0, execucoes: 0, execMs: 0 };
       perfDiagnostico.ws = { mensagens: 0, parse: 0, parseMs: 0, handlerMs: 0, porOpcode: new Map() };
       perfDiagnostico.watchers.clear();
+      perfDiagnostico.trocaPersonagem.eventos.length = 0;
       perfInstalarContagemDom();
+      perfIniciarObservacaoDeTroca();
       document.documentElement && document.documentElement.setAttribute(PERF_MARCA, "1");
     } else {
       perfRemoverContagemDom();
+      perfPararObservacaoDeTroca();
       if (document.documentElement) document.documentElement.removeAttribute(PERF_MARCA);
     }
     sendState({ perfDiagAtivo: perfDiagnostico.ativo, perfDiagInicio: perfDiagnostico.inicio });
@@ -2010,12 +2088,14 @@
           if (estado === socketJogo.estado) return;
           socketJogo.estado = estado;
           if (estado === "aberto") socketJogo.abertoEm = Date.now();
+          perfRegistrarTroca(`socket:${estado}`);
           if (estado === "fechado") {
             socketJogo.fechadoEm = Date.now();
             // v0.11.31 — socket caiu: a identidade que o protocolo tinha
             // virou foto velha. O 103 chega de novo na reconexão (confirmado
             // nas capturas, ~2s depois de abrir).
             euZerar();
+            perfRegistrarTroca("identidade:zerada-por-socket");
           }
         } catch (e) {}
       });
