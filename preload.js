@@ -58,4 +58,17 @@ contextBridge.exposeInMainWorld("hunteraFarm", {
   // v0.11.7 — link "criar conta" na tela de login, abre o site no navegador
   // padrão (não dentro do app).
   swagOpenSignupPage: () => ipcRenderer.invoke("swag:openSignupPage"),
+  // v0.12.2 — CPU/RAM por processo, com o nome da conta em cada renderer. O
+  // mapa vai daqui porque só o renderer sabe qual <webview> é qual conta.
+  getPerfMetrics: (mapaDeContas) => ipcRenderer.invoke("perf:metrics", mapaDeContas),
+  // v0.12.2 — pede ao Chromium o purge de memória que o anti-desconexão
+  // (v0.4.4) impede de acontecer sozinho.
+  purgeMemory: (webContentsIds) => ipcRenderer.invoke("perf:purge", webContentsIds),
+  // v0.12.3 — janela minimizada/restaurada. Com a janela escondida nem a conta
+  // selecionada está sendo vista, e aí o freio de render vale pra todas.
+  onAppVisibilityChanged: (callback) => {
+    const handler = (_event, visivel) => callback(!!visivel);
+    ipcRenderer.on("app:visibility", handler);
+    return () => ipcRenderer.removeListener("app:visibility", handler);
+  },
 });

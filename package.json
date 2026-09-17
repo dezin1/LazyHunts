@@ -1,6 +1,6 @@
 {
   "name": "huntera-multiconta",
-  "version": "0.11.35",
+  "version": "0.12.4",
   "description": "App desktop (Electron) não-oficial pra manter várias contas do Huntera logadas em paralelo, cada uma isolada, numa janela só. Projeto de aprendizado — inspirado no HunteraFarm (descontinuado), reescrito do zero.",
   "private": true,
   "main": "main.js",
@@ -10,7 +10,10 @@
     "start": "electron .",
     "dist": "electron-builder",
     "publish": "electron-builder --publish always",
-    "commit": "node scripts/commit.mjs"
+    "commit": "node scripts/commit.mjs",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:all": "electron-builder --mac --win"
   },
   "devDependencies": {
     "electron": "^32.0.0",
@@ -19,7 +22,7 @@
   "build": {
     "appId": "br.com.andre.hunteramulticonta",
     "productName": "Swag",
-    "icon": "build/icon.ico",
+    "icon": "build/icon",
     "files": [
       "main.js",
       "preload.js",
@@ -47,6 +50,34 @@
     },
     "directories": {
       "output": "dist-novo"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.icns",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "artifactName": "Swag-mac-${arch}.${ext}"
+    },
+    "dmg": {
+      "artifactName": "Swag-mac-${arch}.dmg",
+      "title": "Swag ${version}"
     }
   },
   "dependencies": {

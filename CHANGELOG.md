@@ -1,5 +1,241 @@
 # Changelog
 
+## 0.12.4 — 2026-09-17
+
+### Correção: o painel de desempenho ficava "Medindo…" para sempre
+
+Defeito meu na v0.12.2, e dos bobos. Pus uma condição pra só medir com a seção aberta (`offsetParent !== null`), e ela ficava **antes** da primeira escrita de texto. Na sua máquina a condição nunca passou, então nada nunca foi escrito e o painel ficou parado no texto inicial por minutos. A condição economizava uma chamada de IPC a cada 4 segundos — ou seja, nada — e tinha exatamente um modo de falha, que foi o que aconteceu. Removida.
+
+**Três coisas mudaram:**
+
+1. **Mede na hora.** Antes a primeira medição só vinha depois de 4 segundos; agora sai assim que o app abre, e de novo toda vez que você abre as Configurações.
+2. **O painel nunca fica mudo.** Cada motivo de falha agora tem frase própria: preload antigo ("feche e abra o Swag de novo"), handler não registrado, erro do `getAppMetrics`, resposta vazia. Se a montagem do painel estourar, o erro aparece no lugar do número em vez de sumir.
+3. **Teste pra isso**, que é a parte que importa: `teste-perf.js` ganhou 8 casos que rodam `renderPerfLive` com preload velho, `hunteraFarm` inexistente, handler que rejeita, handler que estoura sem promessa, `getAppMetrics` indisponível, resposta vazia, resposta nula e o caminho feliz — **e conferem que em todos o painel escreveu alguma coisa**. Bateria total: **406 checagens**.
+
+A lição registrada no CLAUDE.md é essa: painel de diagnóstico que não diagnostica a si mesmo é o mesmo defeito que o detector de spawn seco teve por meses — ficar em silêncio quando quebra é pior do que não existir.
+
+## 0.12.3 — 2026-09-17
+
+### Não desenhar as contas que ninguém está vendo
+
+Sua ideia: "aba minimizada não renderiza o jogo e fica só troca de mensagens". O objetivo estava certo, o caminho não era possível — e a diferença importa.
+
+**Por que não dá pra trocar o cliente por um WebSocket direto.** O protocolo do Huntera é **criptografado** (investigado em 04/09/2026, está no CLAUDE.md: 48 frames reais, bytes indistinguíveis de ruído nos dois sentidos). O Swag lê texto plano porque o gancho está em `TextDecoder.decode` — a gente lê **depois que o próprio cliente do jogo decifrou**, com a chave da sessão dele. Nunca decifrámos nada, e nunca mandámos uma mensagem: tudo que muda estado é clique no DOM. Um cliente próprio precisaria da chave de sessão, o que é um projeto de engenharia reversa à parte — e um cliente próprio falando o protocolo é um risco de banimento categoricamente maior que automatizar o cliente oficial.
+
+**Mas o caro nunca foi o socket — é o Phaser.** O jogo é Angular + Phaser, e o Phaser desenha o mundo em canvas/WebGL num loop de `requestAnimationFrame`, 60 vezes por segundo, em cada conta, mesmo nas que estão fora da tela. E esse loop **é separável do socket**.
+
+**O freio** (toggle em Configurações → Log do protocolo → Desempenho, desligado por padrão). Reduz o desenho a ~2 fps nas contas que ninguém está vendo, e em **todas** quando a janela está minimizada. Volta a 60 fps no instante em que você seleciona a conta.
+
+Não toca em: WebSocket (orientado a evento), timers (heartbeat), nem o HUD do Angular — que é de onde a automação lê capacidade, stamina, botões e tracker de expedição. **Frear o Phaser não cega o bot.**
+
+**Uma decisão de implementação que vale registrar.** O freio **não** troca `requestAnimationFrame` por `setTimeout`. Seria a forma óbvia e seria um tiro no pé: numa conta escondida o Chromium já suspendeu o rAF, enquanto os timers continuam correndo (a v0.4.4 desligou o throttling de timer de propósito) — trocar um pelo outro levaria a conta escondida de 0 fps para 2 fps. Otimização que piora. Em vez disso o rAF continua sendo o único motor, e o freio só **absorve** frames. Assim é impossível gastar mais do que sem o freio, e o teste mede exatamente isso.
+
+**Teste novo: `teste-freio.js`, 18 checagens** — inclusive a garantia estrutural de que o código gerado não contém `setTimeout`, e um sandbox que nem define `setTimeout`, de modo que um motor próprio quebraria o teste em vez de passar despercebido. Bateria total: **398 checagens**.
+
+### O que esperar
+
+Ganho em **CPU e GPU**. Em **RAM não**: textura e buffer de WebGL continuam alocados mesmo sem desenhar — pra memória o que temos é o purge da v0.12.2.
+
+⚠️ Se a imagem engasgar ao voltar pra uma conta (o Phaser pode reagir mal a um delta de frame grande), desligue o toggle e me avise. Não afeta o servidor — o servidor é autoritativo —, mas pode ficar feio na volta.
+
+## 0.12.2 — 2026-09-17
+
+### Desempenho, parte 2: medir em vez de chutar
+
+Você mandou o Gerenciador de Tarefas — 3 contas, "Electron (8)", **2.840 MB e 32% de CPU** — e disse que não sentiu diferença. Justo, e a v0.12.1 não ia mudar esse número mesmo: ela atacou **travada** (gravação síncrona em disco e layout forçado na thread de render), que é outro problema. Confundi os dois na hora de te responder.
+
+**Painel de desempenho** (Configurações → Log do protocolo → Desempenho). O Windows soma o app inteiro num número só, e com um número só não dá pra decidir nada. Agora aparece **memória e CPU por processo, com o nome da conta em cada um** — e a nossa própria interface rotulada separada, que é o que distingue "o app é pesado" de "o jogo é pesado". Usa `app.getAppMetrics()`; é leitura pura, não muda comportamento.
+
+**Liberar memória das contas em segundo plano** (toggle, desligado por padrão). O Chromium devolve memória ao sistema sozinho quando uma aba fica parada — mas a v0.4.4 desligou o backgrounding de renderer no app inteiro pra o jogo não desconectar, e **desligar o backgrounding desliga esse purge junto**. Ou seja: a proteção anti-desconexão cobra em RAM, o tempo todo, de todas as contas. Ligado, o Swag pede o purge na mão a cada 2 minutos, só pras contas que **não estão na tela** — via `Memory.forciblyPurgeJavaScriptMemory`, a mesma operação que o Chromium faria sozinho. Não mexe em prioridade de processo, timer nem socket: nada que o jogo enxergue. O botão **"Liberar agora"** roda em todas e mostra quanto liberou.
+
+Conta visível nunca é purgada automaticamente (forçar coleta no meio do render de quem você está olhando seria trocar um problema por outro), e no modo grade — onde todas estão visíveis — o automático não roda.
+
+**Teste novo: `teste-perf.js`, 25 checagens** — pid vira o nome da conta certa, renderer nenhum fica sem rótulo, conta na tela nunca entra no purge, debugger anexado por outra coisa não é solto por engano. Bateria total: **378 checagens**.
+
+### O que eu ainda não sei, e como descobrir
+
+Auditei nossas estruturas em memória: tudo tem teto (log 120 linhas, rastro, intervalos, anéis do diagnóstico). **Não é o nosso script que come 2,8 GB** — são ~950 MB por conta, e isso é o cliente do jogo mais o Chromium em volta. O painel novo é o que vai dizer quanto disso é o processo de vídeo, quanto é cada conta e quanto somos nós.
+
+Uma ressalva honesta sobre a comparação com o idle-labs: eles anunciam economia rodando **idle games**, que são páginas em sua maioria estáticas. O Huntera é um cliente de MMO em canvas que recebe **3 MB de terreno por mensagem**. O custo por conta é dominado pela página, não pelo container — o número deles com 6 abas de idle game não é comparável ao nosso com 3 clientes de Huntera.
+
+## 0.12.1 — 2026-09-17
+
+### Desempenho — a travada era nossa, não do jogo
+
+Você reportou lag na sua máquina e outros usuários também. Fui medir o código em vez de chutar, e o que estava caro **rodava dentro do processo do jogo, na mesma thread que desenha a tela**. Por isso aparecia como frame travado, e não como "o app está lento".
+
+**1. Cada linha de log gravava o estado inteiro no disco.** `log()` chamava `saveState({log})`, que fazia `getItem` + `JSON.parse` do blob inteiro (com as 120 linhas de log dentro), `JSON.stringify` e `setItem`. `localStorage` é **síncrono e vai pro disco**. São 95 pontos de log no arquivo — era a gravação mais frequente do app. Agora a linha entra no estado na hora e o disco recebe **uma gravação por janela de 1,5 s**: uma rajada de 10 logs vira 1 escrita em vez de 10. `pagehide` descarrega o que estiver pendente, então fechar o app não perde a última linha.
+
+**2. Cache do estado em memória.** `loadState()` é chamado em 25 lugares, vários dentro de timers de 1,2 s / 1,5 s / 4 s, e cada chamada era leitura de disco + parse. Agora o disco é lido uma vez e o cache serve o resto. É seguro porque nesta partição existe **um único escritor** desta chave (todo `setItem` passa por `saveState`) — e mesmo assim o evento `storage` invalida o cache se algum dia aparecer outro. Continua devolvendo **cópia** a cada chamada, pra semântica não mudar em silêncio.
+
+**3. O `MutationObserver` da capacidade estava sem freio.** Ele observa o subtree do container de capacidade com `characterData: true` e disparava `monitorTick()` **a cada mutação**. O HUD do jogo mexe nesse subtree o tempo todo (vida, mana, cap mudam a cada tick), então virava dezenas de ticks por segundo — e cada tick chama `isGameUiReady()` → `queryVisible()` → `isVisible()`, que usa `getComputedStyle` + `getClientRects()`. Isso é **layout síncrono forçado dentro do loop de render do jogo**: o padrão de livro de frame travado, e o suspeito número um. Agora a rajada colapsa num tick só, com 400 ms de freio — imperceptível pro que o observer existe pra fazer, já que o piso dessa mesma decisão sempre foi o poll de 4 s.
+
+**4. Dois timers curtos trabalhando à toa.** O de 1,5 s (sincronizar ALVO com o EK) marcava a conta como **ocupada** a cada disparo mesmo com a sincronia desligada, atravessando o caminho do `monitorTick` de graça. O de 1,2 s (diálogo "seguir o líder") lia o estado antes de checar as travas baratas. Os dois agora conferem do mais barato pro mais caro, e saem antes de encostar no DOM quando a feature está desligada.
+
+**5. Teto de tamanho no log do protocolo.** O tipo 88 (terreno) tem **~3 MB por mensagem** e passava inteiro pro diagnóstico: string de 3 MB clonada pra atravessar a fronteira de mundos, guardada inteira no anel de eventos e descartada logo em seguida pelo teto de bytes. Era churn de GC de megabytes por segundo pra quem ligasse o log — travava a máquina. Agora mensagem acima de 512 KB atravessa só o começo (2000 chars): o tipo continua sendo contado e dá pra ver o formato, que é tudo que a gente quer do terreno. Os catálogos do login, que são o motivo do diagnóstico existir, passam inteiros (42 tem 340 KB, 26 tem 224 KB).
+
+**Nada disso encosta na proteção anti-desconexão** (v0.4.2/v0.4.4). Aquilo continua exatamente como está.
+
+**Teste novo: `teste-desempenho.js`, 29 checagens.** Não testa valor de retorno — testa **contagem**: quantas vezes o disco é tocado, quantos ticks uma rajada de 60 mutações produz, quantos chars atravessam por mensagem. Todo fix desta leva é uma contagem, então o teste é uma contagem. Total da bateria: **353 checagens**.
+
+### O que ficou de fora, de propósito
+
+O modo de economia que deixa conta escondida parar de pintar (afrouxar os switches globais `--disable-renderer-backgrounding` / `--disable-backgrounding-occluded-windows`) **não entrou**. É onde está o maior ganho com o app minimizado, mas é exatamente a área que causou a desconexão que a v0.4.2/v0.4.4 consertou. Fica pra uma versão própria, como toggle desligado por padrão, depois de medir o ganho destes fixes primeiro.
+
+Também não entrou o painel de CPU/RAM por conta.
+
+## 0.12.0 — 2026-09-16
+
+### macOS
+
+A partir daqui **toda entrega sai para os dois sistemas**.
+
+**O conserto que o mac exigia.** O `Menu.setApplicationMenu(null)` da v0.7.2 (você pediu pra sumir com File/Edit/View) no Windows tira só um enfeite. No macOS ele tira junto os **atalhos do sistema**: sem um menu com o papel de edição, **Cmd+C, Cmd+V, Cmd+X e Cmd+A param de funcionar**, e sem o papel de aplicativo não existe Cmd+Q. O app tem campo de texto em vários lugares — token do Telegram, chat id, nome de caçada — onde colar é obrigatório. Agora, só no mac, vai o menor menu que preserva o comportamento nativo: aplicativo e edição. Nada de File/View. Nos outros sistemas continua sem barra nenhuma.
+
+**O resto já estava pronto e eu não esperava.** Nenhum módulo nativo (só `electron` e `electron-updater`, os dois JavaScript puro), nada de registro do Windows, nada de `.exe`, caminhos todos via `path.join`. E o ciclo de vida do mac já estava tratado: `window-all-closed` já checava `darwin` e o handler de `activate` já existia.
+
+**Build.** Entrou o bloco `mac` (dmg + zip, Apple Silicon e Intel), o `icon.icns` gerado a partir do mesmo leão, e os scripts `dist:mac`, `dist:win` e `dist:all`.
+
+**Nome de artefato sem versão** — `Swag-mac-arm64.dmg` em vez de `Swag-0.12.0-arm64.dmg`. Parece detalhe e não é: é o que permite um link de download permanente no site, que nunca mais precisa ser trocado a cada versão.
+
+⚠️ **Sem assinatura da Apple**, o macOS põe o app em quarentena. Na primeira vez: botão direito → Abrir, ou `xattr -cr /Applications/Swag.app`. E a atualização automática do `electron-updater` **não funciona no mac sem app assinado** — no Windows continua igual.
+
+⚠️ **O `.dmg` só pode ser gerado no próprio macOS**: o `dmg-license` é `Valid os: darwin`. Daqui eu produzo o `.app` empacotado em zip (fiz, e ele está íntegro), mas o instalador de verdade sai de um Mac ou de um runner macOS no CI.
+
+## 0.11.42 — 2026-09-15
+
+### Por que o detector ficou mudo na conta do Amoxicilina
+
+O log dele prova que a seca existiu: às 676s ele matou o último bicho e às 687s já estava com **0 criaturas vivas e 67 tiles andados**, num limiar de 56. Foram 181 momentos seguidos com as duas condições satisfeitas, e nada aconteceu.
+
+Duas causas, e as duas silenciosas.
+
+**1. Sem o id do personagem, o critério de tiles é decoração.** O contador de posição só roda quando o app sabe o id, e esse id vem do tipo 103 — que chega **só no login**. Se o gancho instala depois (app aberto com o jogo já rodando), ele nunca chega: na captura dele, 12 minutos, zero mensagens do tipo 103. Sem id, o perfil enche de zeros, o p90 dá zero, o limiar cai no piso de 25 e a comparação `0 >= 25` é falsa pra sempre.
+
+Agora existe uma **terceira fonte do id: o tipo 30** (o XP daquela morte), que traz o `playerId` e chega a cada morte — 488 vezes naquela captura. Em party ele traz o id de quem matou, então a regra se protege: só aceita quando um único id apareceu três vezes ou mais, e se um segundo aparecer ela se desliga em vez de chutar.
+
+E "perfil só de zeros" passou a ser reconhecido pelo que é — **rastro morto** — em vez de virar um limiar inalcançável. O painel diz isso com todas as letras.
+
+**2. Tile não é segundo.** Com o id recuperado, a simulação mostrou o detector disparando **6 segundos** depois da última morte — porque o Amoxicilina é rápido e cobre 40 tiles nesse tempo. E no log real as criaturas voltaram 25s depois. Sair ali seria trocar uma pausa por uma transição, à toa.
+
+Entrou um **piso de 15 segundos**. Nas capturas em que a saída foi certa, os disparos vinham aos 11s (Dezin) e 18s (Kina); o piso preserva as duas — a do Dezin sai 4s mais tarde — e mata a de 6s. Continua sendo 6x mais rápido que os 90s de antes.
+
+⚠️ **Conferir também**: o log dele diz **versão 0.11.36**, e o pacote não tem o campo `eventos` — que só existe a partir da 0.11.37. Ou seja, a instalação dele não subiu junto. O detector é igual nas duas versões, então isso não explica o silêncio, mas vale alinhar.
+
+12 checagens novas rodando contra a captura real dele; 324 no conjunto.
+
+## 0.11.41 — 2026-09-15
+
+### Você não vai me mandar print todo dia
+
+A resposta pra sua pergunta é não, e esta versão existe pra que ela continue sendo não.
+
+A v0.11.40 consertou o motivo real de o painel nunca ser lido (o "Matar " na frente do rótulo). Só que a leitura ainda dependia de três coisas que podem mudar sem aviso: o nome da classe do container, o nome da classe da linha e do rótulo, e uma **frase em português** ("Mostrar as caçadas onde X aparece"). Qualquer uma delas mudando, você voltaria pro print diário.
+
+Agora cada camada tem um plano B — e o plano B do nome da criatura resolve de vez: **o protocolo já me deu os 129 nomes de criatura** (tipo 26). Então qualquer `title`, `alt` ou `aria-label` da linha que seja **exatamente** um nome do catálogo é uma criatura. Sem regex, sem idioma, sem chute. Se o jogo virar inglês ou trocar a frase, continua funcionando.
+
+E continua sem inventar: texto que não é nome de criatura do catálogo é ignorado, e sem catálogo **e** sem a frase ele devolve vazio em vez de adivinhar.
+
+Então o fluxo do seu dia a dia é: a expedição nova aparece, o painel está na tela, o Swag lê e guarda. Sem print, sem mim no meio. A tabela que escrevi ontem (Restless Dead, Woodland Folk) é só rede pra quando o painel não estiver visível.
+
+13 checagens novas quebrando uma dependência de cada vez — classe do container, classe da linha, classe do rótulo, idioma — e conferindo que a leitura sobrevive a todas; 312 no conjunto.
+
+## 0.11.40 — 2026-09-15
+
+### O painel dizia "Matar Giants"; o protocolo dizia "Giants"
+
+Seu print entregou a causa raiz, e ela é muito melhor que as duas famílias que faltavam: **o painel do jogo escreve "Matar Giants" e o tipo 33 manda "Giants"**. A comparação era exata, então nenhuma linha do painel casava com nenhum objetivo — **nunca**.
+
+Isso explica tudo de uma vez. A fonte autoritativa, a que sabe de verdade quais criaturas contam, estava quebrada por uma diferença de prefixo desde o começo. As três fontes de reserva que fui construindo (cache em disco, `familyId`↔`bestiaryId`, classe do bestiário) existem porque a boa estava morta em silêncio — e nenhum teste pegou, porque todos passavam o rótulo já no formato do protocolo.
+
+Agora casa quando o texto do painel **é** o rótulo ou **termina** com ele depois de um espaço. Comparar por "contém" seria frouxo; exigir o fim garante que "Giants" não case com uma linha "Giants Mortos na Semana".
+
+Com isso, qualquer expedição se resolve sozinha assim que o painel estiver na tela — inclusive as que ainda nem existem.
+
+### E as duas que você leu pra mim
+
+**Restless Dead** = Skeleton e Ghoul. **Woodland Folk** = Elf, Elf Scout e Dwarf. Ficaram gravadas como rede pra quando o painel não estiver visível. Conferi cada nome contra o catálogo do jogo antes de escrever — a grafia do jogo é "Elf Scout".
+
+Com a regra do mais fraco da v0.11.39, elas mandam o personagem para:
+
+- **Restless Dead** → Bone Crypt (Skeleton, xp 35), não Ghoul Graveyard
+- **Woodland Folk** → Dwarf Mines (Dwarf, xp 45), não Yalahar Elf Quarter (que tem 2 da família, mas força 175)
+- **Giants** → Cyclop Hills (Cyclops, xp 150), não Issavi Steppe
+
+18 checagens novas, incluindo a prova do prefixo e a validação de cada criatura contra o catálogo real; 300 no conjunto.
+
+## 0.11.39 — 2026-09-15
+
+### A expedição vai pro bicho mais fraco
+
+*"Ela entrou em uma caçada muito forte. A expedição preferencialmente é para ser feita no bicho mais fraco disponível."*
+
+A regra antiga escolhia a caçada que mata **mais** criaturas do objetivo. Parecia eficiente e era o contrário. Na sua expedição "Giants":
+
+| caçada | criaturas da família | monstro mais forte que mora lá |
+|---|---|---|
+| Cyclop Hills | Cyclops | xp 150, vida 400 |
+| Behemoth Quarry | Behemoth | xp 2.500, vida 4.000 |
+| **Issavi Steppe** | Ogre Rowdy **e** Ogre Sage | **xp 9.000, vida 9.800** |
+
+Issavi ganhava por dois acertos contra um — e leva junto Lamassu, Feral Sphinx, Manticore e mais cinco. Era pra lá que o personagem ia.
+
+Agora a ordem é: **mais fraca primeiro**, empate resolvido por quem mata mais criaturas do objetivo. Sua regra também é a mais rápida, não só a mais segura: objetivo de expedição conta **morte**, e vinte Cyclops morrem no tempo de um Lamassu.
+
+A força de uma caçada é a do monstro **mais forte** que mora nela, não a média — lá dentro se enfrenta tudo, não só o bicho do objetivo. Isso vem do tipo 26, que já tinha voltado na v0.11.38.
+
+**O tier continua sendo o mais difícil disponível**, e não é contradição: a caçada decide *quais* bichos, o tier decide *quantos vêm por vez*. Mais bicho fraco por vez é exatamente o que se quer.
+
+Se o tipo 26 ainda não chegou, a força é desconhecida para todas e a contagem de acertos volta a decidir — o comportamento antigo, em vez de um ranking errado.
+
+9 checagens novas contra o catálogo real, incluindo a prova de que a regra antiga escolheria Issavi; 280 no conjunto.
+
+## 0.11.38 — 2026-09-15
+
+### "Ainda não sei quais criaturas contam para Giants"
+
+Fui atrás e a primeira resposta é ruim: **o protocolo não carrega a lista de criaturas de uma família de expedição.** Conferi nos dois lugares onde ela aparece — tipo 33 e tipo 34 — e os dois trazem só `{objectiveId, familyId, label, tier, quota, progress}`. A lista de bichos existe só no painel de expedição do jogo.
+
+Mas achei uma fonte nova que resolve boa parte: o tipo **26** traz `bestiaryClass` por monstro, e o jogo tem 14 classes — Humanoid (25 criaturas), Human (16), Reptile (15), Magical (15), Undead (13), Vermin (9), Aquatic (6), Mammal (6), Dragon (6), Demon (5), **Giant (4)**, Plant (4), Lycanthrope (3), Construct (2).
+
+Quando o rótulo da expedição **é** uma classe, a lista sai inteira e exata. **"Giants" → Behemoth, Cyclops, Ogre Rowdy, Ogre Sage.** E de graça vêm Undead, Dragons, Demons, Vermin, Plants e todas as outras que aparecerem.
+
+O casamento é **exato** com o nome da classe, aceitando só singular/plural. Isso não é preciosismo: "Trolls" não casa com classe nenhuma (troll é Humanoid, que tem 25 criaturas), então a fonte se cala e deixa o caminho antigo responder. Casar por "parecido" mandaria o personagem caçar 25 espécies erradas por horas.
+
+**"Restless Dead" e "Woodland Folk" continuam sem resposta** — são nomes de família do próprio Huntera, não classes de bestiário. Pra esses, só o painel do jogo sabe, e eu preciso ver o painel uma vez pra destravar.
+
+A ordem das fontes ficou: painel do jogo → o que já foi guardado → `familyId` casado com `bestiaryId` → classe do bestiário. O painel sempre ganha.
+
+Com isso o tipo 26 voltou pra escuta (tinha saído na v0.11.35 junto com a capacidade calculada). Custa um parse de ~224 KB uma vez por login, e agora é a única fonte de uma informação que nada mais tem.
+
+17 checagens novas rodando contra o catálogo real de 129 monstros da sua captura; 271 no conjunto.
+
+## 0.11.37 — 2026-09-14
+
+### O log longo agora guarda o que interessa
+
+Sua captura de 46 minutos tinha 171 mil mensagens. O buffer de 4.000 guardou **os últimos 40 segundos**. Tudo que valia — a caçada em grupo se montando, um *"Dezin Zemsta declined the team hunt. The hunt was cancelled."*, um pedido do Amoxicilina que expirou sem resposta — caiu fora antes de eu ver.
+
+A culpa é do volume: movimento, efeito visual e ficha do personagem fazem ~95% das mensagens e empurram o resto pra fora. Numa sessão longa, a captura virava um retrato do último minuto.
+
+Agora existe um **segundo anel, só pro que é raro** — e "raro" é medido, não listado à mão: uma mensagem entra nele enquanto o tipo dela não tiver passado de 400 ocorrências. Tipo tagarela se auto-exclui depois das primeiras (e essas primeiras ficam, que é o que mostra o formato); tipo que acontece dez vezes numa sessão inteira fica inteiro. Sem lista pra manter desatualizada.
+
+Simulado com a proporção real da sua captura: o anel comum cobre 6% do tempo, o de eventos cobre 100% — e guarda 122 das 122 mensagens raras contra 8 de antes.
+
+11 checagens novas; 254 no conjunto.
+
+## 0.11.36 — 2026-09-14
+
+### O painel não conta como o serviço é feito
+
+Você disse: *"nada que diga como que a gente faz as coisas deveria estar visível. no layout para o usuário precisa ser bem clean"*. Aplicado.
+
+- **Saiu a linha "WebSocket: personagem ... · druid 393".** Não dizia nada que você precise saber pra jogar.
+- **O detector de spawn seco saiu da aba de caçada** e foi pra Configurações → Log do protocolo, junto do resto do diagnóstico. Ritmo de lote, tiles e contadores de amostra são ferramenta de quem desenvolve. Não sumiu — quem abre aquela seção está investigando, e foi um daqueles contadores que denunciou o defeito do ritmo.
+- **A expedição parou de despejar diagnóstico de DOM** ("o painel está na tela com 3 linhas... me manda este print"). Ficou só a instrução que resolve: abrir o painel do jogo uma vez.
+
+A aba de caçada agora tem o toggle e nada mais.
+
 ## 0.11.35 — 2026-09-14
 
 ### A capacidade calculada saiu

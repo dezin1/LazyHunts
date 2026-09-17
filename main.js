@@ -17,7 +17,8 @@
 // (contextBridge) + IPC. É o padrão de segurança recomendado pelo próprio
 // Electron.
 
-const { app, BrowserWindow, ipcMain, dialog, Menu, safeStorage, shell } = require("electron");
+// v0.12.2 — `webContents` entrou pra medição de CPU/RAM por conta (`perf:*`).
+const { app, BrowserWindow, ipcMain, dialog, Menu, safeStorage, shell, webContents } = require("electron");
 const path = require("path");
 const fs = require("fs/promises");
 const { pathToFileURL } = require("url");
@@ -324,6 +325,30 @@ function createWindow() {
     },
   });
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+
+  // v0.12.3 — o freio de render precisa saber quando NINGUÉM está olhando.
+  //
+  // Esse sinal não dá pra tirar do renderer sozinho: a v0.4.4 desligou
+  // `--disable-backgrounding-occluded-windows` justamente pra o Chromium NÃO
+  // tratar a janela como escondida (era isso que derrubava a conexão), então
+  // `document.visibilityState` lá dentro não muda mais de forma confiável ao
+  // minimizar. Os eventos da própria janela continuam honestos.
+  //
+  // Com a janela minimizada, nem a conta selecionada está sendo vista — é o
+  // caso em que o freio vale pra TODAS.
+  const avisarVisibilidade = (visivel) => {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("app:visibility", visivel);
+      }
+    } catch (err) {
+      // janela fechando — nada a avisar
+    }
+  };
+  mainWindow.on("minimize", () => avisarVisibilidade(false));
+  mainWindow.on("hide", () => avisarVisibilidade(false));
+  mainWindow.on("restore", () => avisarVisibilidade(true));
+  mainWindow.on("show", () => avisarVisibilidade(true));
 }
 
 // v0.6.1 — André reportou: "quando o usuário tenta logar pelo Google, não
@@ -965,6 +990,129 @@ ipcMain.handle("app:getVersion", () => app.getVersion());
 // mais abaixo no arquivo (mesmo assunto).
 ipcMain.handle("app:checkForUpdates", () => checkForUpdatesManually());
 
+// ---------- v0.12.2 — MEDIÇÃO DE CPU/RAM POR PROCESSO ----------
+//
+// André mandou o Gerenciador de Tarefas: 3 contas abertas, "Electron (8)",
+// 2.840 MB e 32% de CPU. O Windows mostra o TOTAL do app somado — o que não
+// diz nada sobre ONDE está o custo. Sem essa separação eu só posso chutar qual
+// otimização vale a pena, e chute em desempenho é como chute em qualquer outra
+// coisa neste projeto: já custou retrabalho antes.
+//
+// `app.getAppMetrics()` devolve uma linha por processo do Chromium com pid,
+// tipo, CPU e memória. O que falta nele é O QUE cada pid está servindo — e
+// isso só o renderer sabe, porque é ele que tem os <webview> e sabe qual conta
+// é qual. Por isso o renderer manda o mapa {rótulo -> webContentsId} e aqui a
+// gente traduz pra pid.
+//
+// Leitura, nada mais: não muda comportamento nenhum do app.
+ipcMain.handle("perf:metrics", (_event, mapaDeContas) => {
+  const porPid = new Map();
+  try {
+    // A nossa própria interface também é um renderer ("Tab" pro Chromium), e
+    // sem rotular ela o painel mostraria "conta não identificada" pro custo do
+    // próprio Swag — que é justamente o número que separa "o app é pesado" de
+    // "o jogo é pesado".
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      porPid.set(mainWindow.webContents.getOSProcessId(), "Interface do Swag");
+    }
+  } catch (err) {
+    // janela fechando — segue sem esse rótulo
+  }
+  try {
+    for (const [rotulo, wcId] of Object.entries(mapaDeContas || {})) {
+      const wc = webContents.fromId(Number(wcId));
+      if (!wc || wc.isDestroyed()) continue;
+      porPid.set(wc.getOSProcessId(), rotulo);
+    }
+  } catch (err) {
+    // webContents que morreu entre o mapa e aqui — segue sem o rótulo dele
+  }
+
+  let metrics = [];
+  try {
+    metrics = app.getAppMetrics();
+  } catch (err) {
+    return { erro: "getAppMetrics indisponível nesta versão do Electron", processos: [] };
+  }
+
+  const processos = metrics.map((m) => ({
+    pid: m.pid,
+    // `type` do Electron: Browser (o main), Tab (renderer), GPU, Utility...
+    tipo: m.type,
+    // Quando é um renderer de conta, aqui vem o rótulo dela. O nosso próprio
+    // renderer (a interface do Swag) também é "Tab" e fica sem rótulo — por
+    // isso a distinção importa: interface e jogo são custos diferentes.
+    conta: porPid.get(m.pid) || null,
+    cpu: m.cpu ? Math.round((m.cpu.percentCPUUsage || 0) * 10) / 10 : 0,
+    // `workingSetSize` vem em KB. É o número que o Gerenciador de Tarefas
+    // mostra, então bate com o que o André está olhando.
+    memoriaMb: m.memory ? Math.round((m.memory.workingSetSize || 0) / 1024) : 0,
+  }));
+
+  processos.sort((a, b) => b.memoriaMb - a.memoriaMb);
+  return {
+    processos,
+    totalMemoriaMb: processos.reduce((s, p) => s + p.memoriaMb, 0),
+    totalCpu: Math.round(processos.reduce((s, p) => s + p.cpu, 0) * 10) / 10,
+  };
+});
+
+// ---------- v0.12.2 — LIBERAR MEMÓRIA DE UMA CONTA ----------
+//
+// O Chromium tem uma rotina própria pra devolver memória ao sistema quando uma
+// aba fica em segundo plano (purge). A v0.4.4 desligou o `backgrounding` de
+// renderer no app inteiro pra o jogo não desconectar — e desligar o
+// backgrounding desliga o purge junto. Ou seja: a proteção anti-desconexão
+// cobra em RAM, e cobra de todas as contas o tempo todo.
+//
+// `Memory.forciblyPurgeJavaScriptMemory` (CDP) faz exatamente o purge, sem
+// tocar em prioridade de processo, timer ou socket: força a coleta e devolve
+// as páginas livres do heap do V8 pro sistema operacional. É a mesma operação
+// que o Chromium faria sozinho, só que pedida na mão — nada que o jogo enxergue.
+//
+// O debugger é anexado, usado e SOLTO na hora. A v0.4.5 já tinha notado que
+// manter um attach de CDP por webview custa memória própria; aqui o attach dura
+// uma chamada.
+ipcMain.handle("perf:purge", async (_event, wcIds) => {
+  const resultado = [];
+  for (const wcId of wcIds || []) {
+    let wc = null;
+    try {
+      wc = webContents.fromId(Number(wcId));
+    } catch (err) {
+      wc = null;
+    }
+    if (!wc || wc.isDestroyed()) {
+      resultado.push({ wcId, ok: false, motivo: "webContents não existe mais" });
+      continue;
+    }
+    let anexeiAgora = false;
+    try {
+      if (!wc.debugger.isAttached()) {
+        wc.debugger.attach("1.3");
+        anexeiAgora = true;
+      }
+      await wc.debugger.sendCommand("HeapProfiler.collectGarbage");
+      await wc.debugger.sendCommand("Memory.forciblyPurgeJavaScriptMemory");
+      resultado.push({ wcId, ok: true });
+    } catch (err) {
+      resultado.push({ wcId, ok: false, motivo: err && err.message });
+    } finally {
+      // Só solta o que ESTE handler anexou — se o supersampling (v0.3.2) ou
+      // qualquer outra coisa já estava com o debugger preso, não é nosso pra
+      // soltar.
+      if (anexeiAgora) {
+        try {
+          wc.debugger.detach();
+        } catch (err) {
+          // já soltou sozinho — não é erro
+        }
+      }
+    }
+  }
+  return resultado;
+});
+
 // ---------- atualização automática (v0.6.0) ----------
 //
 // André queria compartilhar o app com um amigo sem precisar ficar mandando
@@ -1072,7 +1220,30 @@ function checkForUpdatesManually() {
 // dela (nenhum atalho custom foi registrado nela até hoje). `null` remove a
 // barra inteira (diferente de `autoHideMenuBar`, que só esconde e ainda
 // reaparece com Alt) — precisa ser chamado ANTES de criar qualquer janela.
-Menu.setApplicationMenu(null);
+//
+// ⚠️ v0.12.0 — NO macOS ISSO NÃO PODE SER `null`.
+//
+// No Windows a barra de menu é só um enfeite: tirar não custa nada. No mac
+// ela é OUTRA COISA — é de lá que saem os atalhos do sistema. Sem um menu
+// com o papel `editMenu`, **Cmd+C, Cmd+V, Cmd+X e Cmd+A param de
+// funcionar**, e sem o papel de aplicativo não existe Cmd+Q. Este app tem
+// campo de texto em vários lugares (token do Telegram, chat id, nome de
+// caçada, lista de personagens): colar é obrigatório.
+//
+// Então no mac vai o MENOR menu que preserva o comportamento nativo — o do
+// aplicativo (com Sobre/Ocultar/Sair) e o de edição. Nada de File/View, que
+// era justamente o que incomodava. Nos outros sistemas continua sem barra
+// nenhuma, como você pediu.
+if (process.platform === "darwin") {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      { role: "appMenu" },
+      { role: "editMenu" },
+    ])
+  );
+} else {
+  Menu.setApplicationMenu(null);
+}
 
 app.whenReady().then(async () => {
   createWindow();
