@@ -135,7 +135,7 @@
   // ⚠️ Isto é ZERADO em toda troca de personagem e toda queda de socket. Um
   // nome de personagem velho é pior que nenhum: ele decide atribuição de
   // Telegram, rodízio e quem é líder da party.
-  const eu = { id: null, nome: null, vocacao: null, level: null, em: 0 };
+  const eu = { id: null, nome: null, vocacao: null, level: null, em: 0, sessao: 0, confirmadoPor103: false };
 
   function euZerar() {
     // v0.11.42 — outro personagem, outro id: os candidatos do tipo 30 também
@@ -148,6 +148,22 @@
     eu.vocacao = null;
     eu.level = null;
     eu.em = 0;
+    eu.sessao = 0;
+    eu.confirmadoPor103 = false;
+  }
+
+  // A identidade é confiável somente depois que o socket atual informou o id
+  // (103) e um 15 associou esse id a um nome. Não vence por relógio: vence
+  // quando a sessão do socket termina ou é substituída.
+  function identidadeWsConfirmada() {
+    return !!(
+      socketJogo.estado === "aberto" &&
+      socketJogo.sessao > 0 &&
+      eu.confirmadoPor103 &&
+      eu.sessao === socketJogo.sessao &&
+      eu.id != null &&
+      eu.nome
+    );
   }
 
   // v0.11.35 — A CAPACIDADE CALCULADA FOI REMOVIDA (decisão do André).
@@ -201,6 +217,7 @@
     estado: "desconhecido", // desconhecido | conectando | aberto | fechado
     abertoEm: 0,
     fechadoEm: 0,
+    sessao: 0,
   };
 
   // v0.11.11 — ANALISADOR PRÓPRIO pelo protocolo. O analisador do jogo é
@@ -1421,8 +1438,14 @@
     }
     if (tipo === "103") {
       if (p.playerId != null) {
+        // Um 103 diferente no mesmo socket não pode herdar o nome anterior.
+        // É uma defesa para um futuro fluxo de troca que substitua a sessão
+        // sem entregar o close que observamos hoje.
+        if (eu.id !== p.playerId || eu.sessao !== socketJogo.sessao) euZerar();
         spawnWatch.meuId = p.playerId;
         eu.id = p.playerId;
+        eu.sessao = socketJogo.sessao;
+        eu.confirmadoPor103 = true;
       }
       perfRegistrarTroca("ws:103", { playerId: p.playerId == null ? null : p.playerId });
       return;
@@ -2086,6 +2109,12 @@
         try {
           const estado = String(ev.detail);
           if (estado === socketJogo.estado) return;
+          // A construção de outro WebSocket já delimita uma nova sessão,
+          // mesmo se o servidor não entregar o close do anterior.
+          if (estado === "conectando") {
+            socketJogo.sessao++;
+            euZerar();
+          }
           socketJogo.estado = estado;
           if (estado === "aberto") socketJogo.abertoEm = Date.now();
           perfRegistrarTroca(`socket:${estado}`);
@@ -3424,10 +3453,10 @@
   // jogo — some no seletor de personagens). Usado pra identificar qual das
   // 4 contas mandou cada notificação do Telegram.
   function getActiveCharacterName() {
-    // O protocolo identifica esta conta por id + criatura e este estado é
-    // invalidado na queda do socket/troca de personagem. Quando está fresco,
-    // é a mesma informação do cabeçalho e evita uma consulta DOM recorrente.
-    if (eu.nome && eu.em && Date.now() - eu.em < FICHA_VALIDADE_MS) return eu.nome;
+    // A identidade confirmada pertence à sessão atual do socket; diferente da
+    // ficha (77), ela não depende de uma renovação periódica para continuar
+    // verdadeira. Sem 103 + 15, em transição ou após queda, o DOM é o fallback.
+    if (identidadeWsConfirmada()) return eu.nome;
     const el = queryVisible(document, SEL.characterHeaderName);
     if (el) {
       const texto = el.textContent.trim();
@@ -5309,6 +5338,9 @@
       `Stamina de "${currentName || "personagem atual"}" no fim (${formatStaminaMinutes(getStaminaRemainingMinutes())}) — saindo pra lista de personagens pra passar a vez.`
     );
 
+    // A transição começa aqui. Limpar antes de sair impede que uma confirmação
+    // já recebida pelo socket novo seja apagada depois de o HUD aparecer.
+    euZerar();
     await exitToCharacterList();
 
     const available = listCharactersOnScreen();
@@ -5328,10 +5360,6 @@
     // são do personagem anterior e não valem mais.
     currentHuntNameCache = null;
     soldSinceArrivingInCity = false;
-    // v0.11.31 — e o que o protocolo sabia também era do anterior: nome, id e
-    // vocação. O 103/15 do novo personagem chegam em segundos; até lá, "não
-    // sei" é a resposta certa.
-    euZerar();
     // O `autoResumeSession` guarda "o último personagem que logou" pra
     // retomar sozinho depois de um server save — atualiza pro que entrou
     // agora, senão ele tentaria voltar pro personagem sem stamina.
@@ -5366,13 +5394,15 @@
     try {
       updatePanelStatus("Trocando de personagem");
       log(`Comando remoto (painel): trocando para "${name}"...`);
+      // Mesma proteção do rodízio: a identidade antiga não atravessa a lista,
+      // e não apagamos uma confirmação que chegue antes de `playCharacter`.
+      euZerar();
       await exitToCharacterList();
       await playCharacter(name);
       // Mesma limpeza de estado que a troca automática já faz — cache de
       // caçada, trava de venda e tudo que o protocolo sabia do anterior.
       currentHuntNameCache = null;
       soldSinceArrivingInCity = false;
-      euZerar();
       saveState({ autoResumeSessionCharacter: name });
       novaSessaoStats("troca de personagem (comando remoto)");
       log(`Agora jogando com "${name}" (comando remoto).`);
