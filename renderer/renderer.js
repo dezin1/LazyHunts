@@ -1113,6 +1113,14 @@ if (diagDownloadBtn) {
 const perfDiagToggle = document.getElementById("perfDiagToggle");
 const perfDiagStatus = document.getElementById("perfDiagStatus");
 const perfDiagDownloadBtn = document.getElementById("perfDiagDownloadBtn");
+const perfDiagFinalizadoEm = new Map();
+
+function fmtTempoDecorrido(ms) {
+  const totalSegundos = Math.max(0, Math.floor(ms / 1000));
+  const minutos = Math.floor(totalSegundos / 60);
+  const segundos = totalSegundos % 60;
+  return `${String(minutos).padStart(2, "0")}:${String(segundos).padStart(2, "0")}`;
+}
 
 function renderPerfDiagStatus() {
   if (!perfDiagStatus) return;
@@ -1128,10 +1136,14 @@ function renderPerfDiagStatus() {
     perfDiagStatus.textContent = "Desligado. Mede somente enquanto estiver ligado; não grava payloads.";
     return;
   }
-  const segundos = Math.max(0, Math.round((Date.now() - st.perfDiagInicio) / 1000));
-  perfDiagStatus.textContent = st.perfDiagAtivo
-    ? `Medindo ${st.characterName || "a conta selecionada"} há ${segundos}s. Baixe o baseline ao terminar.`
-    : "Medição encerrada. Baixe o baseline antes de iniciar outra.";
+  if (st.perfDiagAtivo) {
+    perfDiagFinalizadoEm.delete(tabId);
+    perfDiagStatus.textContent = `Medindo ${st.characterName || "a conta selecionada"} há ${fmtTempoDecorrido(Date.now() - st.perfDiagInicio)}. Baixe o baseline ao terminar.`;
+    return;
+  }
+  const fim = perfDiagFinalizadoEm.get(tabId) || Date.now();
+  perfDiagFinalizadoEm.set(tabId, fim);
+  perfDiagStatus.textContent = `Medição encerrada em ${fmtTempoDecorrido(fim - st.perfDiagInicio)}. Baixe o baseline antes de iniciar outra.`;
 }
 
 if (perfDiagToggle) perfDiagToggle.addEventListener("change", () => {
@@ -1992,6 +2004,7 @@ const PERF_PURGE_KEY = "hm_perf_purge_v1";
 const PERF_PURGE_INTERVALO_MS = 2 * 60000;
 let perfPurgeUltimoEm = 0;
 let perfPurgeEmAndamento = false;
+let perfUltimaAmostraEm = 0;
 
 // Só o renderer sabe qual <webview> é qual conta — o main.js enxerga pids.
 function mapaDeContasParaMedicao() {
@@ -2020,6 +2033,17 @@ function rotuloDoProcesso(tipo) {
 function fmtMb(mb) {
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
   return `${mb} MB`;
+}
+
+function renderPerfLiveAge() {
+  const el = document.getElementById("perfLiveAge");
+  if (!el) return;
+  if (!perfUltimaAmostraEm) {
+    el.textContent = "Aguardando a primeira amostra.";
+    return;
+  }
+  const segundos = Math.max(0, Math.floor((Date.now() - perfUltimaAmostraEm) / 1000));
+  el.textContent = segundos === 0 ? "Atualizado agora." : `Atualizado há ${segundos}s.`;
 }
 
 async function renderPerfLive() {
@@ -2055,6 +2079,7 @@ async function renderPerfLive() {
     el.textContent = "Não consegui medir agora — nenhum processo foi reportado.";
     return;
   }
+  perfUltimaAmostraEm = Date.now();
   const linhas = [
     `<b>${escapeHtml(fmtMb(r.totalMemoriaMb))}</b> e <b>${r.totalCpu}%</b> de CPU em ${r.processos.length} processos.`,
   ];
@@ -2065,6 +2090,16 @@ async function renderPerfLive() {
     linhas.push(`${escapeHtml(nome)} — ${escapeHtml(fmtMb(p.memoriaMb))} · ${p.cpu}%`);
   }
   el.innerHTML = linhas.join("<br>");
+  renderPerfLiveAge();
+}
+
+let perfFeedbackVisualTimer = null;
+function iniciarFeedbackVisualDeDesempenho() {
+  if (perfFeedbackVisualTimer) return;
+  perfFeedbackVisualTimer = setInterval(() => {
+    renderPerfDiagStatus();
+    renderPerfLiveAge();
+  }, 1000);
 }
 
 // ---------- liberar memória das contas em segundo plano ----------
@@ -2120,6 +2155,7 @@ function iniciarPainelDeDesempenho() {
   // ficar em "Medindo…". Foi assim que a v0.12.2 falhou em silêncio.
   try {
     montarPainelDeDesempenho();
+    iniciarFeedbackVisualDeDesempenho();
   } catch (err) {
     const el = document.getElementById("perfLive");
     if (el) el.textContent = `A medição não iniciou: ${(err && err.message) || err}`;
