@@ -1058,8 +1058,16 @@ function mesmaCacadaECriatura(item, hunt, criatura) {
 // v0.14.0 (TASK-003) — único ponto de entrada dos botões do catálogo:
 // nunca digitado, sempre `hunt`/`criatura` reais vindos de `bestiaryCatalogo`
 // (ver content-injected.js) ou da própria escada já persistida.
+// TASK-003-R1 — `criatura` é OBRIGATÓRIA pra criar item novo: a automação
+// usa a criatura (não a caçada) pra correlacionar fase do bestiário, e
+// "Rat Cellars" (caçada) não é "Rat" (criatura) — inventar `criatura = hunt`
+// aqui geraria um item que nunca casa com o sinal real do jogo (tipo 92).
+// Itens legados que já existem com esse defeito continuam lidos
+// normalmente por `mesmaCacadaECriatura`/`itensBestiaryLadderPersistiveis`
+// (fallback preservado só do lado da LEITURA) — só a criação nova é que
+// fica proibida de inventar.
 function adicionarOuAvancarNaEscada(hunt, criatura) {
-  if (!selectedAutomationTabId || !hunt) return;
+  if (!selectedAutomationTabId || !hunt || !criatura) return;
   const atual = automationState.get(selectedAutomationTabId) || {};
   const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
   const existente = itensAtuais.find((it) => mesmaCacadaECriatura(it, hunt, criatura));
@@ -1069,7 +1077,7 @@ function adicionarOuAvancarNaEscada(hunt, criatura) {
       it === existente ? { ...it, faseAlvo: (Number(it.faseAlvo) || 1) + 1 } : it
     );
   } else {
-    novo = itensAtuais.concat([{ hunt, criatura: criatura || hunt, faseAlvo: 1, concluido: false }]);
+    novo = itensAtuais.concat([{ hunt, criatura, faseAlvo: 1, concluido: false }]);
   }
   enviarBestiaryLadder(novo);
 }
@@ -1152,13 +1160,16 @@ function renderBestiaryCatalogo(state) {
               </span>`;
             })
             .join("")
-        : '<span class="fieldHint">Nenhuma criatura mapeada pra essa caçada ainda.</span>';
+        : '<span class="fieldHint">Nenhuma criatura mapeada para essa caçada ainda.</span>';
       const tiersTxt = h.tiers.length ? escapeHtml(h.tiers.join(", ")) : "—";
       const forcaTxt = h.forca != null ? fmtNum(h.forca) : "?";
+      // TASK-003-R1 — o card NUNCA tem uma ação "adicionar a caçada inteira":
+      // sem criatura mapeada, não existe nenhum botão aqui (só a mensagem
+      // acima) — a escada correlaciona fase por CRIATURA, então um item sem
+      // criatura real não tem como a automação nunca confirmar progresso.
       return `<div class="bestiaryCatalogCard">
         <div class="bestiaryCatalogCardHeader">
           <b>${escapeHtml(h.hunt)}</b>
-          <button type="button" class="bestiaryCreatureAddBtn" data-add-hunt="${escapeHtml(h.hunt)}" data-add-criatura="">+ adicionar caçada</button>
         </div>
         <div class="bestiaryCatalogMeta">Tiers: ${tiersTxt} · Força: ${forcaTxt}</div>
         <div class="bestiaryCatalogCreatures">${criaturasHtml}</div>
@@ -1166,10 +1177,14 @@ function renderBestiaryCatalogo(state) {
     })
     .join("");
 
+  // TASK-003-R1 — `data-add-criatura` só existe nos botões por criatura
+  // mapeada (o botão genérico do cabeçalho foi removido acima); por isso
+  // não há mais fallback `|| hunt` aqui — um valor vazio significa bug de
+  // marcação, não "caçada inteira", e nesse caso é melhor não criar nada.
   bestiaryCatalogoListaEl.querySelectorAll("button[data-add-hunt]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const hunt = btn.getAttribute("data-add-hunt");
-      const criatura = btn.getAttribute("data-add-criatura") || hunt;
+      const criatura = btn.getAttribute("data-add-criatura");
       adicionarOuAvancarNaEscada(hunt, criatura);
     });
   });
