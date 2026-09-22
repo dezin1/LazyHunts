@@ -2263,12 +2263,26 @@ const FREIO_KEY = "hm_freio_render_v1";
 let janelaVisivel = true;
 const freioAplicado = new Map(); // tabId -> boolean, pra não reenviar o mesmo comando
 const renderBrakeConfirmations = new Map(); // tabId -> confirmação do preload/página
-
-function freioLigado() {
+// A preferência persiste quando possível, mas a sessão não pode depender de
+// localStorage: o usuário acabou de ligar o toggle e o freio precisa valer já.
+let freioLigadoNaSessao = (() => {
   try {
     return localStorage.getItem(FREIO_KEY) === "1";
   } catch (err) {
     return false;
+  }
+})();
+
+function freioLigado() {
+  return freioLigadoNaSessao;
+}
+
+function definirFreioLigado(ligado) {
+  freioLigadoNaSessao = !!ligado;
+  try {
+    localStorage.setItem(FREIO_KEY, freioLigadoNaSessao ? "1" : "0");
+  } catch (err) {
+    // Sem persistência, a decisão ainda continua válida até fechar o app.
   }
 }
 
@@ -2332,11 +2346,7 @@ function iniciarFreioDeRender() {
   if (toggle) {
     toggle.checked = freioLigado();
     toggle.addEventListener("change", () => {
-      try {
-        localStorage.setItem(FREIO_KEY, toggle.checked ? "1" : "0");
-      } catch (err) {
-        // localStorage bloqueado — vale só para esta sessão
-      }
+      definirFreioLigado(toggle.checked);
       if (toggle.checked) aplicarFreioDeRender();
       else soltarFreioDeTodas();
       renderRenderBrakeStatus();
