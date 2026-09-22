@@ -2104,7 +2104,10 @@
   function perfFeatureLigada(feature) {
     if (feature === "sempre") return true;
     const cfg = loadState();
-    if (feature === "automação") return !!running;
+    // TASK-003-F1 — "automação" (telemetria/perfWatcher) precisa refletir
+    // "alguma automação de caçada está rodando", não só a Caçada normal:
+    // desde esta tarefa, o Bestiary também aciona o mesmo `monitorTick`.
+    if (feature === "automação") return algumModoDeCacaAtivo(cfg);
     if (feature === "autoAcceptParty") return !!cfg.autoAcceptParty;
     if (feature === "autoAcceptParty/huntMode") return !!cfg.autoAcceptParty || cfg.huntMode === "group";
     if (feature === "autoInvitePartyEnabled") return !!cfg.autoInvitePartyEnabled;
@@ -4509,7 +4512,13 @@
 
     await leaveHunt();
     await sellLootOnce(cfg, "Saí da caçada por capacidade");
-    if (!running) return;
+    // TASK-003-F1 — era `if (!running) return;`: só reconferia a Caçada
+    // normal ter sido desligada NO MEIO deste `await`. `afterSellingDecideNext`
+    // decide o próximo alvo pra QUALQUER um dos dois modos (via
+    // `alvoDeCacada`/`nomeDoBestiaryLadder`), então a re-checagem tem que
+    // cobrir os dois — senão pausar a Caçada normal no meio de uma venda
+    // enquanto o Bestiary está ativo cancelaria a retomada dele também.
+    if (!algumModoDeCacaAtivo()) return;
     await afterSellingDecideNext(cfg, huntBeforeLeaving);
   }
 
@@ -4638,8 +4647,16 @@
     // TASK-003-D1 — só observa, não decide nada. `loadState()` é cache em
     // memória (v0.12.1) — chamar de novo aqui não é o mesmo problema de
     // I/O que aquele fix resolveu.
-    diagnosticarBloqueioInicialDoBestiary(loadState());
-    if (!running || isBusy || !licensed) return;
+    const cfgParaGate = loadState();
+    diagnosticarBloqueioInicialDoBestiary(cfgParaGate);
+    // TASK-003-F1 — DEFEITO CORRIGIDO: este gate era `if (!running || ...)`,
+    // ou seja, só a Caçada normal liberava o tick — "Iniciar Bestiário"
+    // marcava `bestiaryLadder.enabled` mas o tick que de fato escolhe/inicia
+    // a hunt nunca rodava sem a Caçada normal também ligada. Agora passa se
+    // QUALQUER um dos dois modos está ativo; `isBusy`/`licensed` continuam
+    // travando os dois igual (não são específicos de modo).
+    if (isBusy || !licensed) return;
+    if (!algumModoDeCacaAtivo(cfgParaGate)) return;
 
     // v0.9.15 — comando `resumeGroupHunt` que chegou com a conta ocupada.
     // Executa agora, antes do resto do tick (a própria função pega a trava).
@@ -4753,7 +4770,8 @@
         if (cfg.autoSellOnCityArrival !== false && !soldSinceArrivingInCity && isInCity()) {
           const huntBefore = currentHuntNameCache || cfg.huntName;
           await sellLootOnce(cfg, "Cheguei na cidade");
-          if (!running) return;
+          // TASK-003-F1 — mesmo motivo do outro ponto em runSellAndReturnCycle.
+          if (!algumModoDeCacaAtivo()) return;
           await afterSellingDecideNext(cfg, huntBefore);
           consecutiveErrors = 0;
           return;
@@ -5153,8 +5171,20 @@
     observer.observe(container, { childList: true, characterData: true, subtree: true });
   }
 
+  // TASK-003-F1 — o loop de tick (`pollTimer`/observer) era ligado/desligado
+  // SÓ por `startBot`/`stopBot`, ou seja, só pela Caçada normal. Enquanto
+  // isso, `bestiaryLadder.enabled` nunca chamava `startMonitoring()` —
+  // "Iniciar Bestiário" marcava o campo, mas o `monitorTick` que decide e
+  // executa a hunt simplesmente NUNCA RODAVA se a Caçada normal estivesse
+  // desligada. `monitoringAtivo` deixa `startMonitoring`/`stopMonitoring`
+  // idempotentes (chamar de novo com o mesmo estado não reseta o timer à
+  // toa) — necessário porque agora dois lugares diferentes (Caçada normal e
+  // Bestiary) podem pedir "garanta que o loop está rodando".
+  let monitoringAtivo = false;
+
   function startMonitoring() {
-    stopMonitoring();
+    monitoringAtivo = true;
+    stopMonitoringInterno();
     tryAttachCapacityObserver();
     pollTimer = setInterval(() => {
       perfWatcher("monitor-capacidade", 4000, "automação", () => {
@@ -5165,7 +5195,7 @@
     monitorTick();
   }
 
-  function stopMonitoring() {
+  function stopMonitoringInterno() {
     if (observer) {
       observer.disconnect();
       observer = null;
@@ -5179,6 +5209,34 @@
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
+    }
+  }
+
+  function stopMonitoring() {
+    monitoringAtivo = false;
+    stopMonitoringInterno();
+  }
+
+  // TASK-003-F1 — fonte de verdade do "modo de execução de caça": `running`
+  // (Caçada normal) e `bestiaryLadder.enabled` (Bestiary) NUNCA podem ser
+  // true ao mesmo tempo (garantido nos pontos que os LIGAM — `startBot` e o
+  // bloco de `bestiaryLadder` em `applyConfig` — não aqui, que só LÊ).
+  function bestiaryEstaAtivo(cfg) {
+    const c = cfg || loadState();
+    return !!(c.bestiaryLadder && c.bestiaryLadder.enabled);
+  }
+  function algumModoDeCacaAtivo(cfg) {
+    return running || bestiaryEstaAtivo(cfg);
+  }
+  // Decide se o loop de tick deve estar rodando, com base em QUALQUER um dos
+  // dois modos — chamado depois de qualquer transição de `running` ou de
+  // `bestiaryLadder.enabled`. Nunca cria um SEGUNDO timer: só ajusta o
+  // mesmo `pollTimer`/observer que já existiam antes desta tarefa.
+  function ajustarMonitoramentoConformeModos(cfg) {
+    if (algumModoDeCacaAtivo(cfg)) {
+      if (!monitoringAtivo) startMonitoring();
+    } else if (monitoringAtivo) {
+      stopMonitoring();
     }
   }
 
@@ -5216,6 +5274,13 @@
       log("Configure uma caçada antes de ligar a automação (menu lateral).");
       return;
     }
+    // TASK-003-F1 — MUTUAMENTE EXCLUSIVO: ligar a Caçada normal desliga o
+    // Bestiary, se ele estava ativo. Só o campo `enabled` muda — `itens`,
+    // `index` e o resto da escada seguem intactos pra retomar depois.
+    if (bestiaryEstaAtivo(cfg)) {
+      saveState({ bestiaryLadder: { ...cfg.bestiaryLadder, enabled: false } });
+      log('Bestiário pausado — a Caçada normal foi ligada. A escada continua salva; use "Iniciar Bestiário" pra retomar.');
+    }
     running = true;
     consecutiveErrors = 0;
     lastStaminaLogAt = 0;
@@ -5238,7 +5303,12 @@
   // desligou sozinha depois de errar". Só o segundo caso pode religar sozinho.
   function stopBot(motivo) {
     running = false;
-    stopMonitoring();
+    // TASK-003-F1 — antes chamava `stopMonitoring()` incondicionalmente.
+    // Agora ajusta pro que faz sentido dado o OUTRO modo: se o Bestiary
+    // estava ativo, o loop de tick continua rodando pra ele (senão pausar a
+    // Caçada normal desligaria o Bestiary de brinde, sem ninguém ter
+    // pedido). Só para de vez quando NENHUM dos dois modos segue ativo.
+    ajustarMonitoramentoConformeModos();
     // v0.9.15 — limpar TODO o estado transiente de sincronização em grupo.
     // Antes ficava grudado, com dois efeitos ruins de verdade: (1) desligar a
     // automação de um membro que estava em "memberWaitingInvite" continuava
@@ -5914,8 +5984,14 @@
   // sincronização do time). Aqui é só o caso de automação desligada: vende e
   // para por aí, sem tentar retomar caçada nenhuma.
   async function tryCitySellWhileIdle() {
-    if (running || isBusy || !licensed) return;
     const cfg = loadState();
+    // TASK-003-F1 — era `if (running || ...)`: só a Caçada normal ligada
+    // desativava este watcher (o `monitorTick` já cuida da venda nesse
+    // caso). Agora o Bestiary ativo TAMBÉM desativa — senão, com
+    // `running=false` e `bestiaryLadder.enabled=true`, os dois (este watcher
+    // E o `monitorTick` do Bestiary) tentariam vender/decidir o próximo
+    // alvo ao mesmo tempo.
+    if (algumModoDeCacaAtivo(cfg) || isBusy || !licensed) return;
     if (cfg.autoSellOnCityArrival === false) return;
     if (isHunting()) {
       soldSinceArrivingInCity = false;
@@ -7285,6 +7361,21 @@
         index: raw.index !== undefined ? Math.max(0, Math.round(Number(raw.index)) || 0) : indexAtual || 0,
         itens,
       };
+      // TASK-003-F1 — MUTUAMENTE EXCLUSIVO, direção oposta de `startBot`:
+      // ligar o Bestiary pausa a Caçada normal. `next.running` entra no
+      // MESMO `saveState(next)` do fim desta função — de propósito, pra
+      // `running:false` e `bestiaryLadder.enabled:true` serem persistidos
+      // juntos, atomicamente (evita uma leitura intermediária inconsistente
+      // com só um dos dois já salvo). `huntName`/`pullLevel` da Caçada
+      // normal não são tocados — continuam salvos pra quando o André ligar
+      // ela de novo.
+      if (next.bestiaryLadder.enabled && running) {
+        next.running = false;
+        next.selfStoppedAt = 0; // troca de modo intencional, não erro — não é pra religar sozinha
+        running = false;
+        updatePanelRunning(false);
+        log('Caçada normal pausada — o Bestiário foi ligado. A configuração da Caçada continua salva; use "Ligar automação" pra retomar.');
+      }
       // TASK-003-D1 — confirma que o `setConfig` do clique "Iniciar/Pausar"
       // (ou qualquer outra ação da escada) chegou até aqui e o que foi
       // efetivamente persistido — antes do próximo `sendState()`. `applyConfig`
@@ -7306,6 +7397,13 @@
       });
     }
     saveState(next);
+    // TASK-003-F1 — depois de QUALQUER `setConfig` (não só bestiaryLadder),
+    // garante que o loop de tick está ligado se algum dos dois modos ficou
+    // ativo, e desligado se nenhum ficou. Lê o estado FINAL já persistido
+    // acima — nunca decide com meio-estado no ar. Idempotente
+    // (`ajustarMonitoramentoConformeModos`/`monitoringAtivo`): não recria o
+    // timer se ele já está no estado certo.
+    ajustarMonitoramentoConformeModos();
     sendState();
   }
 
@@ -7465,7 +7563,17 @@
       // Se a automação estava ligada quando a página recarregou de verdade
       // (não troca de rota interna — isso não recarrega a página, só um F5
       // ou reabrir o app), religa sozinha em vez de deixar parada.
-      if (cfg.running) startBot();
+      if (cfg.running) {
+        startBot();
+      } else if (bestiaryEstaAtivo(cfg)) {
+        // TASK-003-F1 — mesmo raciocínio, pro Bestiary: antes disto, um F5
+        // com `bestiaryLadder.enabled=true` e `running=false` deixava o
+        // Bestiary "marcado como ligado" no estado, mas sem NINGUÉM rodando
+        // o loop de tick pra ele — igual ao bug original, só que no boot em
+        // vez de no clique. Não mexe em `running` (continua false, correto).
+        ajustarMonitoramentoConformeModos(cfg);
+        log("Bestiário estava ativo antes do reinício — retomando a escada.");
+      }
     });
   }
 
