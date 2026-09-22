@@ -208,6 +208,7 @@ const zoomOutBtn = document.getElementById("zoomOutBtn");
 const zoomInBtn = document.getElementById("zoomInBtn");
 const zoomLabel = document.getElementById("zoomLabel");
 const statusPill = document.getElementById("statusPill");
+const appVersionTagEl = document.getElementById("appVersionTag"); // TASK-004
 
 // v0.11.0 — "dias de uso" (Swag): login + tela de bloqueio.
 const swagGateEl = document.getElementById("swagGate");
@@ -284,7 +285,13 @@ let selectedAutomationTabId = null;
 // a premium?") — e dois arquivos chamados "log.json" não se comparam.
 let versaoDoApp = null;
 try {
-  window.hunteraFarm.getAppVersion().then((v) => { versaoDoApp = v; }).catch(() => {});
+  window.hunteraFarm.getAppVersion().then((v) => {
+    versaoDoApp = v;
+    // TASK-004 — único ponto que escreve o indicador visual de versão; lê
+    // sempre de `app.getVersion()` (Electron, que por sua vez lê o
+    // `version` do package.json), nunca um número digitado à mão aqui.
+    if (appVersionTagEl && v) appVersionTagEl.textContent = `Swag v${v}`;
+  }).catch(() => {});
 } catch (err) {}
 
 function baixarDiagnostico(tab, pacote) {

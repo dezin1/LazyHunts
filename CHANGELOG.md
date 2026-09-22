@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.0-bestiary.1 — 2026-09-22 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Existe pra dar ao André um número concreto pra apontar quando testar o Bestiário novo ("estou na 0.13.0-bestiary.1"), não uma promessa de que o 0.13.0 definitivo vai sair exatamente assim. Feedback deste ciclo pode ainda mudar comportamento antes do release de verdade.
+
+### Auto Bestiary organizado por CAÇADA (não mais por criatura)
+
+- A escada agora tem **uma entrada por caçada**, nunca uma prioridade separada por criatura da mesma hunt — auditoria confirmou que não existe (nem no protocolo, nem no projeto) uma regra de "conclusão agregada" pra várias criaturas da mesma caçada, então a automação continua decidindo progresso por uma **criatura de referência** só (mesma leitura de `economia.bestiarioFases` de sempre); as demais criaturas mapeadas da caçada aparecem como informação, e dá pra trocar qual delas é a referência.
+- **Nível-alvo virou stepper** (−/+) em "Minha escada", sem teto inventado — não existe um máximo confirmado no protocolo pra qualquer criatura além das 3 primeiras fases já vistas ao vivo.
+- **Iniciar/Pausar Bestiário explícito**: um botão único (mesmo padrão visual do "Ligar automação") liga/desliga a escada inteira sem mexer em ordem, níveis ou "concluídas" — substitui o checkbox discreto de antes.
+- **Configuração legada preservada**: escadas salvas antes desta mudança (inclusive com duas entradas da mesma caçada, de um defeito já corrigido) continuam carregando integralmente — nada é descartado ou consolidado sozinho.
+- **Catálogo de caçadas virou modal** ("+ Adicionar caçadas"), com busca e grid de cards compactos — antes ficava sempre montado na lateral estreita, comprimindo "Minha escada". Fechado, o catálogo não ocupa DOM nenhum.
+
+### Versionamento
+
+- `package.json` e o indicador de versão no rodapé do app (novo, discreto — "Swag vX.Y.Z") passam a ser atualizados junto com toda entrega de teste, a partir de agora — ver regra permanente no `CLAUDE.md` da raiz.
+
 ## 0.12.4 — 2026-09-17
 
 ### Correção: o painel de desempenho ficava "Medindo…" para sempre

@@ -654,6 +654,11 @@
           <svg width="13" height="13" viewBox="0 0 20 20" fill="none"><path d="M16 6.5A6.5 6.5 0 1 0 17.5 10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M16 3v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           Recarregar todas
         </button>
+        <!-- TASK-004 — indicador discreto de versão. Preenchido em renderer.js
+             a partir de `window.hunteraFarm.getAppVersion()` (Electron
+             `app.getVersion()`, que já lê o `version` do package.json — não
+             há nenhum número de versão duplicado/hardcoded aqui). -->
+        <span id="appVersionTag" class="appVersionTag"></span>
       </div>
     </aside>
 

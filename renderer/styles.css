@@ -816,6 +816,18 @@ body {
   flex-direction: column;
   gap: 8px;
 }
+/* TASK-004 — indicador discreto de versão, canto do rodapé já existente
+   (sem tela nova). Preenchido só depois que `getAppVersion()` (IPC ->
+   `app.getVersion()`) responde — fica vazio (sem "gap" visual, o span some
+   sozinho) até lá. */
+.appVersionTag {
+  font-size: 9.5px;
+  color: var(--text-muted);
+  text-align: center;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  letter-spacing: 0.02em;
+}
+.appVersionTag:empty { display: none; }
 /* v0.9.20 — BUG de especificidade, achado no preview renderizado: o rótulo e
    o interruptor apareciam empilhados em vez de lado a lado. `.switchRow`
    (0,1,0) perdia pra `.automationSection label` (0,1,1), que é `display:
