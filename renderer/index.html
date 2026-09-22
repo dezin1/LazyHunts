@@ -176,9 +176,15 @@
                  e no topo dela pra continuar visível sem rolar. Na v0.9.29 ele
                  ficava FORA do painel e era escondido nas outras abas, o que
                  empurrava a barra de abas pra cima e pra baixo a cada troca. -->
+            <!-- TASK-003-F1 — renomeado de "Ligar automação" pra "Ligar
+                 Caçada": desde que o Bestiary ganhou seu próprio motor
+                 (mutuamente exclusivo com este), o nome genérico "automação"
+                 ficava ambíguo — os dois são automação, só que de coisas
+                 diferentes. Este botão sempre controlou só a Caçada normal
+                 (huntName/tier da aba Caçada); o texto agora diz isso. -->
             <button type="button" id="automationToggleBtn" class="autoToggleBtn off">
               <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path d="M5 3.5v13l11-6.5Z"/></svg>
-              Ligar automação
+              Ligar Caçada
             </button>
 
             <!-- v0.11.20 — o detector de spawn seco decidia no escuro: não dava
@@ -650,6 +656,16 @@
           <span>Iniciar com o sistema</span>
           <input type="checkbox" id="autoLaunchToggle" />
         </label>
+        <!-- TASK-UI-01 — protótipo experimental de workspace central. Opt-in,
+             desligado por padrão (localStorage, sem IPC/config real — ver
+             renderer.js). Ligado, os MESMOS #automationPanel/#settingsPanel
+             que hoje vivem espremidos na lateral passam a ser movidos (nunca
+             duplicados) pra um overlay central amplo, igual ao modal
+             "Adicionar caçadas" já faz com o catálogo do Bestiário. -->
+        <label class="switchRow" title="Protótipo TASK-UI-01: abre Automação/Configurações num painel central amplo em vez da lateral estreita">
+          <span>Workspace central (protótipo)</span>
+          <input type="checkbox" id="workspacePrototypeToggle" />
+        </label>
         <button id="reloadAllBtn" type="button">
           <svg width="13" height="13" viewBox="0 0 20 20" fill="none"><path d="M16 6.5A6.5 6.5 0 1 0 17.5 10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M16 3v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           Recarregar todas
@@ -676,6 +692,31 @@
           <button type="button" id="botDockBtn" title="Encaixar de volta no menu">⇤</button>
         </div>
         <div id="botFloatBody"></div>
+      </div>
+
+      <!-- TASK-UI-01 — protótipo: workspace central. Mesma técnica do modal
+           "Adicionar caçadas" logo abaixo (`position:fixed`, cobre a janela
+           inteira, fora do fluxo da lateral estreita) — mas em vez de um
+           catálogo novo, é o DESTINO pra onde #automationPanel/#settingsPanel
+           são movidos (appendChild) quando o toggle "Workspace central
+           (protótipo)" está ligado (ver #workspacePrototypeToggle,
+           renderer.js). Com o protótipo desligado (padrão), este overlay
+           nunca sai do estado hidden e os painéis continuam exatamente onde
+           sempre estiveram, dentro de <aside id="sidebar">. -->
+      <div id="centralWorkspace" class="workspaceOverlay" hidden>
+        <div class="workspaceCard" role="dialog" aria-modal="true" aria-labelledby="workspaceTitulo">
+          <div class="workspaceHeader">
+            <h2 id="workspaceTitulo">Automação</h2>
+            <div class="workspaceHeaderActions">
+              <div class="workspaceSwitch" id="workspaceSwitch">
+                <button type="button" id="workspaceSwitchAutomacao" data-workspace="automacao">Automação</button>
+                <button type="button" id="workspaceSwitchConfig" data-workspace="config">Configurações</button>
+              </div>
+              <button type="button" id="workspaceFecharBtn" class="workspaceFecharBtn" aria-label="Fechar">✕</button>
+            </div>
+          </div>
+          <div class="workspaceBody" id="workspaceBody"></div>
+        </div>
       </div>
 
       <!-- TASK-003-R2.2 — modal "Adicionar caçadas". Fica fora de #automationPanel

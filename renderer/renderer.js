@@ -36,6 +36,7 @@ const AVATAR_COLORS = ["#e0ac4c", "#5fb0e8", "#7ad19a", "#c98be0", "#e88b6a", "#
 const appEl = document.getElementById("app");
 const railEl = document.getElementById("iconRail");
 const sidebarEl = document.getElementById("sidebar");
+const sidebarFooterEl = document.getElementById("sidebarFooter");
 const tabsEl = document.getElementById("tabs");
 const containerEl = document.getElementById("webviewContainer");
 const mainAreaEl = document.getElementById("mainArea");
@@ -708,7 +709,7 @@ function renderTabs() {
         <div class="acctInfo">
           <div class="acctTopRow">
             <span class="acctLabel" contenteditable="true" spellcheck="false">${escapeHtml(tab.label)}</span>
-            <button type="button" class="acctAutoBtn${automationState.get(tab.id)?.running ? " on" : ""}" title="Automação"><svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path d="M11 2 4 12h5l-1 6 8-11h-5l0-5Z"/></svg></button>
+            <button type="button" class="acctAutoBtn${automationState.get(tab.id)?.running ? " on" : ""}" title="Abrir painel"><svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path d="M11 2 4 12h5l-1 6 8-11h-5l0-5Z"/></svg></button>
             <button type="button" class="acctClose" title="Fechar conta">×</button>
           </div>
           <div class="acctSubRow">
@@ -874,7 +875,11 @@ function openAutomationPanel(tabId) {
   // v0.9.17 — destacado, o painel vive no card flutuante: a barra lateral
   // continua mostrando a lista de contas (é o ponto da opção C).
   botFloatTitleEl.textContent = tab?.label ? `${tab.label} · automação` : "Automação";
-  accountsGroupEl.hidden = !botDetached ? true : false;
+  // TASK-UI-01 — com o protótipo de workspace central ligado, o painel vai
+  // pro overlay (moveIntoWorkspace) e a lista de contas continua visível na
+  // lateral (é o ponto do protótipo: nunca mais "sumir" atrás do painel).
+  if (isWorkspacePrototypeOn()) moveIntoWorkspace("automacao");
+  accountsGroupEl.hidden = isWorkspacePrototypeOn() ? false : !botDetached ? true : false;
   settingsPanelEl.hidden = true;
   automationPanelEl.hidden = false;
   if (botDetached) botFloatEl.hidden = false;
@@ -890,10 +895,14 @@ function openAutomationPanel(tabId) {
 function closeAutomationPanel() {
   selectedAutomationTabId = null;
   showAccountsList();
+  if (workspaceOpenKind === "automacao") moveBackFromWorkspace();
 }
 
 function openSettingsPanel() {
-  accountsGroupEl.hidden = true;
+  // TASK-UI-01 — ver openAutomationPanel acima: mesma ideia, painel de
+  // Configurações vai pro workspace central em vez da lateral.
+  if (isWorkspacePrototypeOn()) moveIntoWorkspace("config");
+  accountsGroupEl.hidden = isWorkspacePrototypeOn() ? false : true;
   automationPanelEl.hidden = true;
   settingsPanelEl.hidden = false;
   railSettingsBtn.classList.add("on");
@@ -911,6 +920,7 @@ function openSettingsPanel() {
 
 function closeSettingsPanel() {
   showAccountsList();
+  if (workspaceOpenKind === "config") moveBackFromWorkspace();
 }
 
 // v0.4.3 — André apontou especificamente pra essa barrinha ("a barrinha
@@ -3003,9 +3013,11 @@ function syncAutomationPanel() {
     : "carregando…";
   automationCyclesEl.textContent = state.cycles ? `${state.cycles} ciclo${state.cycles === 1 ? "" : "s"}` : "";
 
+  // TASK-003-F1 — "Caçada" em vez de "automação" (genérico demais agora que
+  // o Bestiary é um segundo motor mutuamente exclusivo com este).
   automationToggleBtn.innerHTML = state.running
-    ? '<svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="5" width="10" height="10" rx="2"/></svg>Desligar automação'
-    : '<svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path d="M5 3.5v13l11-6.5Z"/></svg>Ligar automação';
+    ? '<svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="5" width="10" height="10" rx="2"/></svg>Desligar Caçada'
+    : '<svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path d="M5 3.5v13l11-6.5Z"/></svg>Ligar Caçada';
   automationToggleBtn.className = "autoToggleBtn " + (state.running ? "on" : "off");
   automationToggleBtn.disabled = !guestReady.has(tabId);
 
@@ -3679,6 +3691,111 @@ botFloatBarEl.addEventListener("pointercancel", endBotDrag);
 window.addEventListener("resize", () => {
   if (!botDetached) return;
   applyFloatPosition(parseFloat(botFloatEl.style.left) || 0, parseFloat(botFloatEl.style.top) || 0);
+});
+
+// ---------- TASK-UI-01 — protótipo: workspace central ----------
+// Mesmo princípio do destacar/encaixar logo acima: #automationPanel e
+// #settingsPanel são MOVIDOS (appendChild), nunca duplicados, entre a
+// lateral e o overlay central — todos os campos, listeners e o
+// syncAutomationPanel()/syncSettingsPanel() que já existem continuam
+// funcionando sem nenhuma alteração, só muda o endereço no DOM. Opt-in,
+// desligado por padrão: com o toggle desmarcado, isWorkspacePrototypeOn()
+// é sempre false e openAutomationPanel/openSettingsPanel/closeAutomationPanel/
+// closeSettingsPanel (acima) se comportam exatamente como antes desta tarefa.
+const centralWorkspaceEl = document.getElementById("centralWorkspace");
+const workspaceBodyEl = document.getElementById("workspaceBody");
+const workspaceTituloEl = document.getElementById("workspaceTitulo");
+const workspaceFecharBtn = document.getElementById("workspaceFecharBtn");
+const workspaceSwitchAutomacaoBtn = document.getElementById("workspaceSwitchAutomacao");
+const workspaceSwitchConfigBtn = document.getElementById("workspaceSwitchConfig");
+const workspacePrototypeToggle = document.getElementById("workspacePrototypeToggle");
+
+let workspacePrototypeEnabled = loadPref("workspacePrototype", "0") === "1";
+let workspaceOpenKind = null; // "automacao" | "config" | null — qual painel está no overlay agora
+
+// Destacado (botDetached) já usa o mesmo mecanismo de mover o
+// #automationPanel pra outro container flutuante — os dois nunca disputam o
+// mesmo nó ao mesmo tempo porque o workspace só age quando NÃO está
+// destacado (o botão "Destacar" fica desabilitado enquanto o protótipo está
+// ligado, ver abaixo).
+function isWorkspacePrototypeOn() {
+  return workspacePrototypeEnabled && !botDetached;
+}
+
+function syncWorkspaceSwitch() {
+  if (!workspaceSwitchAutomacaoBtn || !workspaceSwitchConfigBtn) return;
+  workspaceSwitchAutomacaoBtn.classList.toggle("active", workspaceOpenKind === "automacao");
+  workspaceSwitchConfigBtn.classList.toggle("active", workspaceOpenKind === "config");
+  workspaceSwitchAutomacaoBtn.disabled = !activeTabId;
+}
+
+function moveIntoWorkspace(kind) {
+  if (!centralWorkspaceEl || !workspaceBodyEl) return;
+  if (workspaceOpenKind && workspaceOpenKind !== kind) {
+    // Troca de painel com o workspace já aberto (ex.: Configurações ->
+    // Automação) — devolve o painel anterior pro lugar dele na lateral antes
+    // de trazer o novo, mesmas âncoras que dockBotPanel já usa acima.
+    const prevEl = workspaceOpenKind === "automacao" ? automationPanelEl : settingsPanelEl;
+    if (workspaceOpenKind === "automacao") sidebarEl.insertBefore(prevEl, settingsPanelEl);
+    else sidebarEl.insertBefore(prevEl, sidebarFooterEl);
+  }
+  const el = kind === "automacao" ? automationPanelEl : settingsPanelEl;
+  workspaceTituloEl.textContent = kind === "automacao" ? "Automação" : "Configurações";
+  workspaceBodyEl.appendChild(el);
+  centralWorkspaceEl.hidden = false;
+  workspaceOpenKind = kind;
+  syncWorkspaceSwitch();
+}
+
+function moveBackFromWorkspace() {
+  if (!workspaceOpenKind) return;
+  const kind = workspaceOpenKind;
+  workspaceOpenKind = null;
+  centralWorkspaceEl.hidden = true;
+  const el = kind === "automacao" ? automationPanelEl : settingsPanelEl;
+  if (kind === "automacao") sidebarEl.insertBefore(el, settingsPanelEl);
+  else sidebarEl.insertBefore(el, sidebarFooterEl);
+}
+
+function closeCentralWorkspace() {
+  if (workspaceOpenKind === "automacao") closeAutomationPanel();
+  else if (workspaceOpenKind === "config") closeSettingsPanel();
+}
+
+if (workspacePrototypeToggle) {
+  workspacePrototypeToggle.checked = workspacePrototypeEnabled;
+  if (botDetachBtn) botDetachBtn.disabled = workspacePrototypeEnabled;
+  workspacePrototypeToggle.addEventListener("change", () => {
+    workspacePrototypeEnabled = workspacePrototypeToggle.checked;
+    savePref("workspacePrototype", workspacePrototypeEnabled ? "1" : "0");
+    // Desligou com o workspace aberto: fecha e devolve o painel pra lateral
+    // (nunca deixa o protótipo desligado com um nó "preso" no overlay).
+    if (!workspacePrototypeEnabled && workspaceOpenKind) closeCentralWorkspace();
+    if (botDetachBtn) botDetachBtn.disabled = workspacePrototypeEnabled;
+  });
+}
+
+if (workspaceFecharBtn) workspaceFecharBtn.addEventListener("click", closeCentralWorkspace);
+if (centralWorkspaceEl) {
+  centralWorkspaceEl.addEventListener("click", (e) => {
+    if (e.target === centralWorkspaceEl) closeCentralWorkspace();
+  });
+}
+if (workspaceSwitchAutomacaoBtn) {
+  workspaceSwitchAutomacaoBtn.addEventListener("click", () => {
+    if (!activeTabId) return;
+    openAutomationPanel(activeTabId);
+  });
+}
+if (workspaceSwitchConfigBtn) {
+  workspaceSwitchConfigBtn.addEventListener("click", openSettingsPanel);
+}
+// Esc fecha o workspace — mas só quando o modal do catálogo do Bestiário
+// (que pode abrir POR CIMA do workspace, já que Bestiário mora dentro da
+// aba Automação) não estiver aberto; senão as duas camadas fechariam junto
+// num Esc só.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && workspaceOpenKind && !bestiaryModalAberto) closeCentralWorkspace();
 });
 
 function renderRailAccounts() {

@@ -1974,3 +1974,147 @@ body {
 .dayGold { grid-area: gold; color: var(--accent); font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; font-variant-numeric: tabular-nums; }
 .dayXp { grid-area: xp; color: var(--text-muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10px; font-variant-numeric: tabular-nums; }
 .dayTime { grid-area: tempo; color: var(--text-muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10px; font-variant-numeric: tabular-nums; }
+
+/* ---------- TASK-UI-01 — protótipo: workspace central ---------- */
+/* Mesma técnica do modal "Adicionar caçadas" (`.bestiaryModalOverlay`,
+   acima): `position:fixed;inset:0` cobre a JANELA INTEIRA do app, não só a
+   lateral de 250px. z-index abaixo do modal do catálogo (200) de propósito
+   — o Bestiário mora dentro da aba Automação, que por sua vez pode estar
+   dentro deste workspace; assim o catálogo consegue abrir por cima sem as
+   duas camadas brigarem. Protótipo opt-in (`#workspacePrototypeToggle`,
+   renderer.js), desligado por padrão — com ele desligado este overlay nunca
+   sai do `hidden` e a lateral original é o fallback completo. */
+.workspaceOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 20px;
+}
+.workspaceOverlay[hidden] { display: none; }
+.workspaceCard {
+  width: min(960px, 94vw);
+  height: min(780px, 92vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.workspaceHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.workspaceHeader h2 {
+  margin: 0;
+  font-size: 15px;
+  font-family: "Fraunces", Georgia, serif;
+  color: var(--text-primary);
+}
+.workspaceHeaderActions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+/* Segmentado Automação/Configurações — o workspace troca de "página" sem
+   fechar o overlay, chamando os MESMOS openAutomationPanel()/
+   openSettingsPanel() que os botões da trilha de ícones já chamavam. */
+.workspaceSwitch {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-inset);
+  border-radius: 6px;
+  padding: 2px;
+}
+.workspaceSwitch button {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.workspaceSwitch button.active { background: var(--bg-sidebar); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
+.workspaceSwitch button:disabled { opacity: 0.35; cursor: default; }
+.workspaceFecharBtn {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.workspaceFecharBtn:hover { color: var(--accent); background: var(--bg-hover); }
+
+.workspaceBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* #automationPanel/#settingsPanel já são flex:1;overflow-y:auto sozinhos
+   (é assim que rolam dentro da lateral hoje) — a única rolagem fica DENTRO
+   deles, nunca aninhada com outra caixa do workspace. Aqui só troca o
+   padding: a lateral usava 16px pensados pra 250px de largura; o card tem
+   quase 4x isso pra usar. */
+.workspaceBody #automationPanel,
+.workspaceBody #settingsPanel {
+  padding: 18px 24px 24px;
+}
+/* Com espaço de sobra, os ícones das abas (escondidos na lateral estreita,
+   ver `#automationTabBar .tabBtn svg` acima) voltam a caber. */
+.workspaceBody #automationTabBar .tabBtn svg { display: inline; }
+.workspaceBody #automationTabBar .tabBtn { gap: 5px; }
+
+/* Densidade "modal do Bestiário" aplicada ao resto dos painéis: cada
+   `.automationGroup` vira um cartão com borda própria (em vez do divisor de
+   borda-superior pensado pra coluna única de 250px) e os cartões se
+   distribuem em grade quando cabem — mais espaço de leitura/comparação, que
+   é o que este protótipo existe pra avaliar. MESMA técnica (não só mesma
+   ideia) do grid do catálogo do Bestiário logo acima
+   (`.bestiaryCatalogoLista`): `grid-template-columns: repeat(auto-fit,
+   minmax(...))`. Testado com `flex-wrap`+`flex-basis` primeiro e descartado
+   — sem o piso rígido do `minmax()`, os cartões só ENCOLHEM lado a lado em
+   janela estreita (texto espremido) em vez de empilhar; o grid força 1
+   coluna de verdade abaixo do piso, sem @media. */
+/* Os cartões (`.automationGroup`) são filhos do `.tabPanel` de cada aba, não
+   direto do `.automationScroll` (que só empilha os `.tabPanel`, um visível
+   por vez via `[hidden]`) — por isso o grid vai no `.tabPanel`.
+   `:not([hidden])` é obrigatório aqui: sem ele, esta regra (3 classes) tem
+   mais especificidade que `.tabPanel[hidden] { display:none }` (1 classe +
+   1 atributo) e VENCERIA o `display:none`, reexibindo as abas escondidas. */
+.workspaceBody .automationScroll .tabPanel:not([hidden]) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+  align-content: start;
+}
+.workspaceBody .automationGroup {
+  margin: 0;
+  padding: 16px 20px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-inset);
+  min-width: 0;
+}
+.workspaceBody .automationGroupTitle { font-size: 11.5px; }
+/* O histórico (lista de eventos, potencialmente longa) não tem cartões
+   `.automationGroup` — é só a lista — então volta a fluir em bloco normal
+   em vez de participar do flex-wrap acima. `:not([hidden])` pelo mesmo
+   motivo da regra genérica logo acima: não pode vencer o `display:none` da
+   aba quando ela não é a selecionada. */
+.workspaceBody #autoTabPanelHistorico:not([hidden]) { display: block; }
+.workspaceBody #autoTabPanelHistorico .autoLog { max-width: 920px; }
