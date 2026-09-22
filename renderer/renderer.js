@@ -75,6 +75,15 @@ const automationRotateListEl = document.getElementById("automationRotateList");
 // v0.11.12 — expedição da guild.
 const automationExpeditionToggle = document.getElementById("automationExpeditionToggle");
 const expedicaoListaEl = document.getElementById("expedicaoLista");
+// v0.13.0 — Auto Bestiary por fase (escada de prioridade).
+// v0.14.0 (TASK-003) — fluxo guiado: o formulário manual (nome de caçada +
+// criatura + fase digitados à mão) saiu. No lugar entram o catálogo
+// pesquisável (`bestiaryCatalogo`, vindo pronto do protocolo — ver
+// content-injected.js) e um botão por criatura pra adicionar/avançar.
+const automationBestiaryLadderToggle = document.getElementById("automationBestiaryLadderToggle");
+const bestiaryLadderListaEl = document.getElementById("bestiaryLadderLista");
+const bestiaryCatalogoSearchInput = document.getElementById("bestiaryCatalogoSearch");
+const bestiaryCatalogoListaEl = document.getElementById("bestiaryCatalogoLista");
 // v0.11.10 — detector de spawn seco (config GLOBAL, não por conta).
 const spawnEnabledToggle = document.getElementById("spawnEnabledToggle");
 const spawnFieldsEl = document.getElementById("spawnFields");
@@ -990,6 +999,270 @@ automationExpeditionToggle.addEventListener("change", () => {
     payload: { expeditionEnabled: automationExpeditionToggle.checked },
   });
 });
+
+// v0.13.0 — Auto Bestiary por fase: escada de prioridade escolhida pelo
+// usuário (não é "100% de todas", é só até a fase-alvo de cada item).
+// v0.14.0 (TASK-003) — DEFEITO CORRIGIDO: esta função lia `it.creature` e
+// NUNCA incluía `it.hunt` no objeto persistido. O backend (applyConfig, em
+// content-injected.js) sempre exigiu `hunt` não-vazio pra aceitar um item —
+// então todo item adicionado pela tela antiga era descartado em silêncio no
+// backend, mesmo aparecendo normalmente na lista da UI. Fix: persiste
+// `hunt` de verdade (nunca inventado — vem do catálogo, ver
+// `renderBestiaryCatalogo`) e mantém `criatura` (com fallback pro próprio
+// nome da caçada quando a caçada não tem criatura única mapeada).
+function itensBestiaryLadderPersistiveis(itens) {
+  return (Array.isArray(itens) ? itens : [])
+    .map((it) => {
+      const hunt = typeof it.hunt === "string" ? it.hunt.trim() : "";
+      if (!hunt) return null; // sem hunt válido, nem manda — já descarta aqui, não só no backend
+      const criatura = typeof it.criatura === "string" && it.criatura.trim() ? it.criatura.trim() : hunt;
+      return { hunt, criatura, faseAlvo: Number(it.faseAlvo) || 1, concluido: !!it.concluido };
+    })
+    .filter(Boolean);
+}
+
+function enviarBestiaryLadder(itens, enabledOverride) {
+  if (!selectedAutomationTabId) return;
+  const atual = automationState.get(selectedAutomationTabId) || {};
+  const ladderAtual = atual.bestiaryLadder || {};
+  sendAutomationCommand(selectedAutomationTabId, {
+    type: "setConfig",
+    payload: {
+      bestiaryLadder: {
+        enabled: enabledOverride != null ? enabledOverride : !!ladderAtual.enabled,
+        index: Number(ladderAtual.index) || 0,
+        itens: itensBestiaryLadderPersistiveis(itens),
+      },
+    },
+  });
+}
+
+automationBestiaryLadderToggle.addEventListener("change", () => {
+  if (!selectedAutomationTabId) return;
+  const atual = automationState.get(selectedAutomationTabId) || {};
+  const itens = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
+  enviarBestiaryLadder(itens, automationBestiaryLadderToggle.checked);
+});
+
+// v0.14.0 (TASK-003) — dois itens "iguais" (mesma caçada + mesma criatura,
+// caçada sem criatura própria conta como criatura === hunt) não viram
+// duplicata na escada: clicar de novo no catálogo avança a fase-alvo do
+// item existente em vez de empilhar linha repetida.
+function mesmaCacadaECriatura(item, hunt, criatura) {
+  if (!item || item.hunt !== hunt) return false;
+  const critA = item.criatura || item.hunt;
+  const critB = criatura || hunt;
+  return critA === critB;
+}
+
+// v0.14.0 (TASK-003) — único ponto de entrada dos botões do catálogo:
+// nunca digitado, sempre `hunt`/`criatura` reais vindos de `bestiaryCatalogo`
+// (ver content-injected.js) ou da própria escada já persistida.
+function adicionarOuAvancarNaEscada(hunt, criatura) {
+  if (!selectedAutomationTabId || !hunt) return;
+  const atual = automationState.get(selectedAutomationTabId) || {};
+  const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
+  const existente = itensAtuais.find((it) => mesmaCacadaECriatura(it, hunt, criatura));
+  let novo;
+  if (existente) {
+    novo = itensAtuais.map((it) =>
+      it === existente ? { ...it, faseAlvo: (Number(it.faseAlvo) || 1) + 1 } : it
+    );
+  } else {
+    novo = itensAtuais.concat([{ hunt, criatura: criatura || hunt, faseAlvo: 1, concluido: false }]);
+  }
+  enviarBestiaryLadder(novo);
+}
+
+bestiaryCatalogoSearchInput.addEventListener("input", () => {
+  // A busca é só filtro local — não manda nada pro backend nem espera
+  // resposta. Força o catálogo a re-renderizar contra o último `state`
+  // conhecido (zero requisição nova, zero polling).
+  const atual = selectedAutomationTabId ? automationState.get(selectedAutomationTabId) : null;
+  if (atual) {
+    bestiaryCatalogoAssinaturaAnterior = null; // busca mudou -> não é "nada mudou", força redesenhar
+    renderBestiaryCatalogo(atual);
+  }
+});
+
+// v0.14.0 (TASK-003) — catálogo de caçadas disponíveis pra montar a escada
+// só com botões (nunca texto digitado). Fonte: `state.bestiaryCatalogo`,
+// que já vem pronto do backend (derivado de `guild.cacadas`, tipo 42 — ver
+// content-injected.js). `null` só antes do tipo 42 chegar depois do login;
+// nesse meio-tempo mostra um estado de carregamento com botão manual de
+// atualizar (reaproveita o comando `buildFullCatalog` que já existe pro
+// catálogo da caçada solo — não inventa endpoint novo).
+let bestiaryCatalogoAssinaturaAnterior = null;
+
+function renderBestiaryCatalogo(state) {
+  const catalogo = state.bestiaryCatalogo;
+
+  if (catalogo === null || catalogo === undefined) {
+    bestiaryCatalogoListaEl.innerHTML =
+      '<p class="fieldHint">Carregando catálogo de caçadas… ' +
+      '<button type="button" id="bestiaryCatalogoRefreshBtn">Atualizar catálogo</button></p>';
+    const refreshBtn = document.getElementById("bestiaryCatalogoRefreshBtn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", () => {
+        if (!selectedAutomationTabId) return;
+        sendAutomationCommand(selectedAutomationTabId, { type: "buildFullCatalog" });
+      });
+    }
+    bestiaryCatalogoAssinaturaAnterior = null;
+    return;
+  }
+
+  const busca = (bestiaryCatalogoSearchInput.value || "").trim().toLowerCase();
+  const itensLadder = (state.bestiaryLadder && state.bestiaryLadder.itens) || [];
+  const naEscada = (hunt, criatura) => itensLadder.some((it) => mesmaCacadaECriatura(it, hunt, criatura));
+
+  const filtrado = !busca
+    ? catalogo
+    : catalogo.filter(
+        (h) => h.hunt.toLowerCase().includes(busca) || h.criaturas.some((c) => c.toLowerCase().includes(busca))
+      );
+
+  // Assinatura simples pra não redesenhar quando nada mudou de fato: o
+  // catálogo em si não muda depois do login, só a busca e a escada mexem
+  // no que é mostrado. Evita custo de innerHTML a cada `sendState()`.
+  const assinatura = JSON.stringify({
+    busca,
+    n: catalogo.length,
+    ladder: itensLadder.map((i) => `${i.hunt}|${i.criatura}|${i.faseAlvo}`),
+  });
+  if (assinatura === bestiaryCatalogoAssinaturaAnterior && document.activeElement !== bestiaryCatalogoSearchInput) {
+    return;
+  }
+  bestiaryCatalogoAssinaturaAnterior = assinatura;
+
+  if (!filtrado.length) {
+    bestiaryCatalogoListaEl.innerHTML = '<p class="fieldHint">Nenhuma caçada encontrada pra essa busca.</p>';
+    return;
+  }
+
+  bestiaryCatalogoListaEl.innerHTML = filtrado
+    .map((h) => {
+      const criaturasHtml = h.criaturas.length
+        ? h.criaturas
+            .map((c) => {
+              const jaNaEscada = naEscada(h.hunt, c);
+              return `<span class="bestiaryCreatureChip${jaNaEscada ? " bestiaryCreatureChipNaEscada" : ""}">
+                ${escapeHtml(c)}
+                <button type="button" class="bestiaryCreatureAddBtn" data-add-hunt="${escapeHtml(h.hunt)}" data-add-criatura="${escapeHtml(c)}">${jaNaEscada ? "+1 fase" : "+ adicionar"}</button>
+              </span>`;
+            })
+            .join("")
+        : '<span class="fieldHint">Nenhuma criatura mapeada pra essa caçada ainda.</span>';
+      const tiersTxt = h.tiers.length ? escapeHtml(h.tiers.join(", ")) : "—";
+      const forcaTxt = h.forca != null ? fmtNum(h.forca) : "?";
+      return `<div class="bestiaryCatalogCard">
+        <div class="bestiaryCatalogCardHeader">
+          <b>${escapeHtml(h.hunt)}</b>
+          <button type="button" class="bestiaryCreatureAddBtn" data-add-hunt="${escapeHtml(h.hunt)}" data-add-criatura="">+ adicionar caçada</button>
+        </div>
+        <div class="bestiaryCatalogMeta">Tiers: ${tiersTxt} · Força: ${forcaTxt}</div>
+        <div class="bestiaryCatalogCreatures">${criaturasHtml}</div>
+      </div>`;
+    })
+    .join("");
+
+  bestiaryCatalogoListaEl.querySelectorAll("button[data-add-hunt]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const hunt = btn.getAttribute("data-add-hunt");
+      const criatura = btn.getAttribute("data-add-criatura") || hunt;
+      adicionarOuAvancarNaEscada(hunt, criatura);
+    });
+  });
+}
+
+function renderBestiaryLadder(state) {
+  renderBestiaryCatalogo(state);
+
+  const ladder = state.bestiaryLadder || {};
+  const itens = Array.isArray(ladder.itens) ? ladder.itens : [];
+  const indiceAtual = Number(ladder.indiceAtual) || 0;
+
+  if (!itens.length) {
+    bestiaryLadderListaEl.innerHTML =
+      '<p class="fieldHint">Nenhuma criatura na escada ainda. Adicione pelo catálogo acima, na ordem de prioridade.</p>';
+    return;
+  }
+
+  const linhas = itens.map((it, i) => {
+    const faseAlvo = Number(it.faseAlvo) || 1;
+    const faseAtual = Number(it.faseAtual) || 0;
+    const pct = Math.min(100, Math.round((faseAtual / faseAlvo) * 100));
+    const done = !!it.concluido;
+    const ativo = !done && i === indiceAtual;
+    const huntLabel = it.hunt || it.criatura || "?";
+    const criaturaSubLine =
+      it.criatura && it.criatura !== huntLabel
+        ? `<div class="bestiaryLadderRowCriatura">${escapeHtml(it.criatura)}</div>`
+        : "";
+    return `<div class="bestiaryLadderRow${ativo ? " bestiaryLadderRowAtivo" : ""}${done ? " expDone" : ""}" data-idx="${i}">
+      <div class="expHead">
+        <span>${i + 1}. ${escapeHtml(huntLabel)}${ativo ? " — caçando agora" : ""}</span>
+        <b>Fase ${faseAtual} → alvo ${faseAlvo}</b>
+      </div>
+      ${criaturaSubLine}
+      <div class="expBar"><div class="expFill" style="width:${pct}%"></div></div>
+      <div class="bestiaryLadderRowMeta">
+        ${it.abatesAtuais != null ? `<span class="fieldHint">${fmtNum(it.abatesAtuais)} abates</span>` : "<span></span>"}
+        <label class="bestiaryLadderConcluidoLabel">
+          <input type="checkbox" data-ladder-done="${i}"${done ? " checked" : ""} /> já concluída
+        </label>
+        <button type="button" class="bestiaryLadderProximaFaseBtn" data-ladder-nextfase="${i}" title="Aumentar fase-alvo manualmente">+ Próxima fase</button>
+        <button type="button" data-ladder-up="${i}" title="Subir prioridade"${i === 0 ? " disabled" : ""}>▲</button>
+        <button type="button" data-ladder-down="${i}" title="Descer prioridade"${i === itens.length - 1 ? " disabled" : ""}>▼</button>
+        <button type="button" data-ladder-remove="${i}" title="Remover">✕</button>
+      </div>
+    </div>`;
+  });
+  bestiaryLadderListaEl.innerHTML = linhas.join("");
+
+  bestiaryLadderListaEl.querySelectorAll("input[data-ladder-done]").forEach((chk) => {
+    chk.addEventListener("change", () => {
+      const i = Number(chk.getAttribute("data-ladder-done"));
+      const novo = itens.slice();
+      novo[i] = { ...novo[i], concluido: chk.checked };
+      enviarBestiaryLadder(novo);
+    });
+  });
+  bestiaryLadderListaEl.querySelectorAll("button[data-ladder-nextfase]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.getAttribute("data-ladder-nextfase"));
+      const novo = itens.slice();
+      novo[i] = { ...novo[i], faseAlvo: (Number(novo[i].faseAlvo) || 1) + 1 };
+      enviarBestiaryLadder(novo);
+    });
+  });
+  bestiaryLadderListaEl.querySelectorAll("button[data-ladder-up]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.getAttribute("data-ladder-up"));
+      if (i <= 0) return;
+      const novo = itens.slice();
+      [novo[i - 1], novo[i]] = [novo[i], novo[i - 1]];
+      enviarBestiaryLadder(novo);
+    });
+  });
+  bestiaryLadderListaEl.querySelectorAll("button[data-ladder-down]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.getAttribute("data-ladder-down"));
+      if (i >= itens.length - 1) return;
+      const novo = itens.slice();
+      [novo[i + 1], novo[i]] = [novo[i], novo[i + 1]];
+      enviarBestiaryLadder(novo);
+    });
+  });
+  bestiaryLadderListaEl.querySelectorAll("button[data-ladder-remove]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.getAttribute("data-ladder-remove"));
+      const novo = itens.slice();
+      novo.splice(i, 1);
+      enviarBestiaryLadder(novo);
+    });
+  });
+}
 
 function renderExpedicao(state) {
   const ex = state.expedicoes;
@@ -2465,6 +2738,12 @@ function syncAutomationPanel() {
   // pra começar treinando sozinho.
   automationExpeditionToggle.checked = !!state.expeditionEnabled;
   renderExpedicao(state);
+  // v0.14.0 (TASK-003) — o guard de foco antigo protegia os campos de texto
+  // manuais (removidos). A busca do catálogo tem seu próprio guard dentro de
+  // `renderBestiaryCatalogo` (assinatura + `document.activeElement`), então
+  // aqui não precisa mais nada além de sempre re-renderizar.
+  automationBestiaryLadderToggle.checked = !!(state.bestiaryLadder && state.bestiaryLadder.enabled);
+  renderBestiaryLadder(state);
   automationTrainStaminaToggle.checked = !!state.trainOnStaminaZero;
   automationTrainIdleToggle.checked = !!state.trainOnIdleInCity;
   automationTrainIdleFieldsEl.hidden = !automationTrainIdleToggle.checked;

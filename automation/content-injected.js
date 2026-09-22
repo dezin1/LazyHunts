@@ -266,6 +266,14 @@
     inicio: 0,
     kills: 0,
     bestiario: new Map(), // espécie -> contagem na última mensagem vista
+    // v0.13.0 — AUTO BESTIARY POR FASE (Ladder). Maior fase CONFIRMADA via
+    // tipo 92 (`"Bestiary stage {stage} reached: {monster}"`) nesta sessão,
+    // por criatura (chave = nomeParaChaveBestiario). Só sobe, nunca desce.
+    // Não sabe o que já tinha sido cruzado ANTES de o app abrir — é por
+    // isso que a UI de configuração mostra os abates atuais da criatura
+    // (economia.bestiario) pro André decidir se marca um item como já
+    // concluído na hora de montar a lista.
+    bestiarioFases: new Map(), // chave da criatura -> maior fase confirmada
     xp: 0,
     ultimoXp: null, // {atual, necessario}
     ultimoLevel: null,
@@ -821,10 +829,96 @@
   // terminarem, volta a ser a caçada configurada. É exatamente o que o
   // André pediu: "se está fazendo expedição tem que continuar nela, só
   // desconsidera quando finalizar todas".
+  // v0.13.0 — Auto Bestiary por fase (Ladder). Devolve `{item, index}` do
+  // item ATUAL da lista (o que está "rodando" agora), ou null se a feature
+  // estiver desligada, sem itens, ou config ausente. Normaliza o índice pra
+  // nunca estourar o tamanho do array (lista editada por fora, item
+  // removido etc. — na dúvida, começa do zero em vez de quebrar).
+  function bestiaryLadderItemAtual(cfg) {
+    const ladder = cfg && cfg.bestiaryLadder;
+    if (!ladder || !ladder.enabled || !Array.isArray(ladder.itens) || !ladder.itens.length) return null;
+    const n = ladder.itens.length;
+    const i = ((Number(ladder.index) || 0) % n + n) % n;
+    return { item: ladder.itens[i], index: i };
+  }
+
+  // Maior fase já CONFIRMADA (tipo 92) pra criatura do item, nesta sessão.
+  function bestiaryLadderFaseAtual(item) {
+    const chave = nomeParaChaveBestiario((item && item.criatura) || (item && item.hunt));
+    return economia.bestiarioFases.get(chave) || 0;
+  }
+
+  // Nome da caçada que o Ladder quer rodar agora — é o que entra no lugar
+  // de `cfg.huntName` sempre que a feature está ligada. `null` quando
+  // desligada/vazia, pra quem chama poder cair de volta em `cfg.huntName`
+  // sem precisar saber que o Ladder existe.
+  function nomeDoBestiaryLadder(cfg) {
+    const atual = bestiaryLadderItemAtual(cfg);
+    return atual && atual.item ? atual.item.hunt || null : null;
+  }
+
+  // Acha o próximo item NÃO concluído a partir de `apartirDe` (exclusive),
+  // dando a volta na lista uma vez. `null` = todos concluídos.
+  function bestiaryLadderProximoIndice(itens, apartirDe) {
+    for (let passo = 1; passo <= itens.length; passo++) {
+      const i = (apartirDe + passo) % itens.length;
+      if (!itens[i].concluido) return i;
+    }
+    return null;
+  }
+
+  // Verifica se o item ATUAL do Ladder já bateu a fase-alvo. Se sim, marca
+  // `concluido` nele e devolve `{concluido, proximo, proximoIndex,
+  // faseAtingida}` pra quem chama decidir trocar de caçada — sem chamar
+  // `ensureHunting`/`leaveHunt` aqui dentro: essa função só DECIDE, quem
+  // executa o clique é o `monitorTick`, no mesmo espírito de
+  // `avaliarTrocaPorExpedicao`. Muda o estado (`concluido`/`index`) e
+  // devolve o `ladder` inteiro pra quem chama persistir com `saveState`.
+  function avaliarAvancoDoBestiaryLadder(cfg) {
+    const atual = bestiaryLadderItemAtual(cfg);
+    if (!atual || atual.item.concluido) return null;
+    const faseAtingida = bestiaryLadderFaseAtual(atual.item);
+    const faseAlvo = Number(atual.item.faseAlvo) || 0;
+    if (faseAtingida < faseAlvo) return null;
+
+    const ladder = cfg.bestiaryLadder;
+    const itens = ladder.itens.map((it, i) => (i === atual.index ? { ...it, concluido: true } : it));
+    const proximoIndex = bestiaryLadderProximoIndice(itens, atual.index);
+    return {
+      concluidoItem: atual.item,
+      faseAtingida,
+      itens,
+      // Sem próximo (todos concluídos): fica no mesmo índice, só marcado.
+      index: proximoIndex === null ? atual.index : proximoIndex,
+      todosConcluidos: proximoIndex === null,
+      proximo: proximoIndex === null ? null : itens[proximoIndex],
+    };
+  }
+
+  // Aplica o avanço (se houver) na config em memória E no disco, loga o
+  // resultado e devolve true/false pra quem chama saber se precisa trocar
+  // de caçada AGORA. Fica de fora de `avaliarAvancoDoBestiaryLadder` de
+  // propósito: aquela função só decide (pura, fácil de testar isolada),
+  // esta aqui tem efeito colateral (log, saveState, mutar `cfg`).
+  function processarAvancoDoBestiaryLadder(cfg) {
+    const avanco = avaliarAvancoDoBestiaryLadder(cfg);
+    if (!avanco) return false;
+    const novoLadder = { ...cfg.bestiaryLadder, itens: avanco.itens, index: avanco.index };
+    cfg.bestiaryLadder = novoLadder;
+    saveState({ bestiaryLadder: novoLadder });
+    log(
+      avanco.todosConcluidos
+        ? `Auto Bestiary: "${avanco.concluidoItem.hunt}" bateu a fase ${avanco.faseAtingida} (alvo: ${avanco.concluidoItem.faseAlvo}) — todas as caçadas da lista já foram concluídas.`
+        : `Auto Bestiary: "${avanco.concluidoItem.hunt}" bateu a fase ${avanco.faseAtingida} (alvo: ${avanco.concluidoItem.faseAlvo}) — avançando pra "${avanco.proximo.hunt}".`
+    );
+    return true;
+  }
+
   function alvoDeCacada(cfg, cacadaAtual) {
     const atual = cacadaAtual || currentHuntNameCache || cfg.huntName;
+    const ladderNome = nomeDoBestiaryLadder(cfg);
     const padrao = {
-      nome: cfg.huntName || atual,
+      nome: ladderNome || cfg.huntName || atual,
       pullLevel: cfg.pullLevel,
       expedicao: false,
       objetivo: null,
@@ -872,6 +966,7 @@
     economia.inicio = Date.now();
     economia.kills = 0;
     economia.bestiario.clear();
+    economia.bestiarioFases.clear();
     economia.xp = 0;
     economia.ultimoXp = null;
     economia.ultimoLevel = null;
@@ -898,6 +993,39 @@
       if (antes !== undefined && atual > antes) economia.kills += atual - antes;
       economia.bestiario.set(especie, atual);
     }
+  }
+
+  // v0.13.0 — mesma transformação que o próprio jogo usa nas chaves do tipo
+  // 9 (`kills`/`stages`): tira os espaços e deixa a primeira letra minúscula.
+  // Confirmado com o catálogo real: "Adult Goanna" → "adultGoanna", "Ogre
+  // Sage" → "ogreSage", "Feral Sphinx" → "feralSphinx", "Manticore" →
+  // "manticore". Existe pra poder comparar um NOME DE EXIBIÇÃO (o que vem no
+  // tipo 92, `params.monster`, ou o que o André digita na configuração) com
+  // as chaves de `economia.bestiario`/`economia.bestiarioFases`, sem precisar
+  // de uma tabela de tradução separada.
+  function nomeParaChaveBestiario(nome) {
+    return String(nome || "")
+      .replace(/\s+/g, "")
+      .replace(/^./, (c) => c.toLowerCase());
+  }
+
+  // v0.13.0 — "Bestiary stage {stage} reached: {monster}" (tipo 92,
+  // CONFIRMADO AO VIVO em 22/09/2026). Dispara no exato abate que cruza o
+  // limiar da fase, direto do servidor — não depende de o jogador clicar
+  // "Desbloquear" na Cyclopedia (isso só ativa a RECOMPENSA, é outro estado,
+  // ver `stages` do tipo 9 e o achado no CLAUDE.md). Só sobe: uma mensagem
+  // de fase menor que a já vista é ignorada (não deveria acontecer, mas o
+  // princípio do projeto é nunca deixar um dado desonesto piorar o estado).
+  function bestiaryStageLerMensagem(p) {
+    if (!p || typeof p.template !== "string") return;
+    if (!/^bestiary stage \{stage\} reached/i.test(p.template)) return;
+    const params = p.params || {};
+    const monstro = typeof params.monster === "string" ? params.monster : null;
+    const fase = Number(params.stage);
+    if (!monstro || !Number.isFinite(fase)) return;
+    const chave = nomeParaChaveBestiario(monstro);
+    const antes = economia.bestiarioFases.get(chave) || 0;
+    if (fase > antes) economia.bestiarioFases.set(chave, fase);
   }
 
   // v0.11.21 — XP pelo tipo 77. O `experience` é DENTRO DO LEVEL, não total da
@@ -976,6 +1104,7 @@
     }
     if (tipo === "92") {
       vendaLerMensagem(p);
+      bestiaryStageLerMensagem(p);
       return;
     }
     if (tipo === "41") {
@@ -2389,6 +2518,20 @@
     // caçada (decisão do André: "a expedição vira uma prioridade e ele
     // executa"), sempre no tier mais difícil e só no modo Solo.
     expeditionEnabled: false,
+    // v0.13.0 — Auto Bestiary por fase (Ladder). Lista ORDENADA por
+    // prioridade (o André escolhe a ordem ao montar); cada item tem a
+    // caçada a rodar, a criatura-alvo dentro dela (default = mesmo nome da
+    // caçada) e até qual fase do Bestiary farmar (1, 2, 3...) antes de
+    // passar pro próximo item. Ao contrário da expedição, o Ladder só
+    // decide a caçada quando NÃO há expedição ativa (`alvoDeCacada`) — são
+    // features que ainda não foram reconciliadas, mesma pendência que já
+    // existe no huntera-automacao pra Escada/Auto Bestiary.
+    bestiaryLadder: {
+      enabled: false,
+      index: 0,
+      // { hunt: "Adult Goanna", criatura: "Adult Goanna", faseAlvo: 2, concluido: false }
+      itens: [],
+    },
     // v0.11.9 — depois de uma queda (server save), religar a automação sozinha
     // se tiver sido ELA que se desligou por erros. Ligado por padrão: é
     // justamente o furo que o André reportou ("garantir que a caçada retorne
@@ -3069,6 +3212,52 @@
       // v0.11.8 — treino.
       autoRestartAfterOutage: cfg.autoRestartAfterOutage !== false,
       expeditionEnabled: !!cfg.expeditionEnabled,
+      // v0.13.0 — Auto Bestiary por fase (Ladder). Manda pro painel cada item
+      // já com `faseAtual`/`abatesAtuais` calculados (em vez de o painel
+      // reimplementar `nomeParaChaveBestiario` do lado de cá) — mesmo
+      // espírito do `expedicaoMapa`: o host só desenha o que já vem pronto.
+      bestiaryLadder: (() => {
+        const ladder = cfg.bestiaryLadder || { enabled: false, index: 0, itens: [] };
+        const itens = (ladder.itens || []).map((it) => {
+          const chave = nomeParaChaveBestiario(it.criatura || it.hunt);
+          return {
+            ...it,
+            faseAtual: economia.bestiarioFases.get(chave) || 0,
+            abatesAtuais: economia.bestiario.get(chave) ?? null,
+          };
+        });
+        const atual = bestiaryLadderItemAtual({ ...cfg, bestiaryLadder: { ...ladder, itens } });
+        return {
+          enabled: !!ladder.enabled,
+          index: Number(ladder.index) || 0,
+          itens,
+          indiceAtual: atual ? atual.index : null,
+        };
+      })(),
+      // TASK-003 — catálogo guiado (caçada → criaturas/tiers/força), pra a
+      // tela de Bestiário parar de pedir nome de caçada/criatura digitado à
+      // mão. Fonte: `guild.cacadas` (tipo 42, já chega pronto no login — ZERO
+      // custo de DOM, é o mesmo dado que já alimenta `scrapeHuntNames`/
+      // `requestTiers` da caçada solo). `forcaDaCacada` também já existe (é o
+      // mesmo usado pra ordenar a Expedição pelo bicho mais fraco). `null`
+      // só antes do tipo 42 chegar (raro — normalmente é questão de segundos
+      // após o login); o painel decide o que mostrar nesse meio-tempo.
+      bestiaryCatalogo: (() => {
+        const doProtocolo = catalogoDoProtocolo();
+        if (!doProtocolo) return null;
+        return doProtocolo
+          .map((h) => {
+            if (!h || !h.name) return null;
+            const criaturas = Array.isArray(h.monsters)
+              ? h.monsters.map((m) => (m && m.name ? String(m.name) : "")).filter(Boolean)
+              : [];
+            const tiers = Array.isArray(h.tiers)
+              ? h.tiers.map((t) => (t && t.name ? String(t.name) : "")).filter(Boolean)
+              : [];
+            return { hunt: String(h.name).trim(), criaturas, tiers, forca: forcaDaCacada(h) };
+          })
+          .filter(Boolean);
+      })(),
       // v0.11.26 — o painel precisa poder mostrar QUAIS objetivos já têm o
       // mapa de criaturas. Sem isso, "ligado e parado" é indistinguível de
       // "ligado e funcionando".
@@ -4575,8 +4764,15 @@
         // de segurança vem logo depois de a caçada começar.
         const estavaTreinando = isTraining();
         updatePanelStatus("Iniciando caçada");
+        // v0.13.0 — checa o Auto Bestiary ANTES de decidir o que retomar: se
+        // a última caçada bateu a fase-alvo bem no instante em que o
+        // personagem caiu (bag cheia, stamina, spawn seco), quem retoma já
+        // deve ser a PRÓXIMA da lista, não a que acabou de terminar.
+        if (cfg.bestiaryLadder && cfg.bestiaryLadder.enabled && !cfg.expeditionEnabled && cfg.huntMode !== "group") {
+          processarAvancoDoBestiaryLadder(cfg);
+        }
         log("Personagem não está caçando e já tem stamina suficiente — retomando a caçada configurada...");
-        await ensureHunting(cfg);
+        await ensureHunting(cfg, nomeDoBestiaryLadder(cfg));
         if (estavaTreinando && isTraining()) {
           await cancelTraining();
           log("A caçada começou e o treino continuou ativo — cancelei o treino pra não ficar com os dois ao mesmo tempo.");
@@ -4617,6 +4813,30 @@
           updatePanelStatus("Caçando (expedição)");
           consecutiveErrors = 0;
           return;
+        }
+      }
+
+      // v0.13.0 — AUTO BESTIARY (Ladder) NO MEIO DA CAÇADA. Mesma ideia da
+      // troca por expedição acima: não espera o spawn secar (podia levar
+      // minutos) nem o personagem cair sozinho — assim que o tipo 92 confirma
+      // que a fase-alvo foi atingida, troca na hora. Mutuamente exclusivo com
+      // expedição por enquanto (pendência igual à do huntera-automacao pra
+      // Escada/Auto Bestiary — reconciliar as duas é trabalho futuro, não
+      // pedido ainda).
+      if (cfg.bestiaryLadder && cfg.bestiaryLadder.enabled && !cfg.expeditionEnabled && cfg.huntMode !== "group") {
+        if (processarAvancoDoBestiaryLadder(cfg)) {
+          const destino = nomeDoBestiaryLadder(cfg);
+          const atualNome = currentHuntNameCache || cfg.huntName;
+          if (destino && destino !== atualNome) {
+            updatePanelStatus("Indo pra próxima do Auto Bestiary");
+            await leaveHunt();
+            zerarDeteccaoDeSpawn();
+            await ensureHunting(cfg, destino);
+            updatePanelStatus("Caçando (Auto Bestiary)");
+            log(`Auto Bestiary: caçando "${destino}" agora.`);
+            consecutiveErrors = 0;
+            return;
+          }
         }
       }
 
@@ -6822,6 +7042,37 @@
     if (partial.rotateMinStaminaMinutes !== undefined) {
       const n = Number(partial.rotateMinStaminaMinutes);
       if (!Number.isNaN(n)) next.rotateMinStaminaMinutes = n;
+    }
+    // v0.13.0 — Auto Bestiary (Ladder). O painel manda o objeto inteiro
+    // (lista editada por completo, igual `rotateCharacters`) — nunca confia
+    // cegamente no que vem do host: item sem `hunt` ou com `faseAlvo`
+    // inválido é descartado em vez de gravado quebrado.
+    if (partial.bestiaryLadder && typeof partial.bestiaryLadder === "object") {
+      const raw = partial.bestiaryLadder;
+      const itens = Array.isArray(raw.itens)
+        ? raw.itens
+            .map((it) => {
+              if (!it || typeof it.hunt !== "string" || !it.hunt.trim()) return null;
+              const faseAlvo = Number(it.faseAlvo);
+              if (!Number.isFinite(faseAlvo) || faseAlvo < 1) return null;
+              return {
+                hunt: it.hunt.trim(),
+                criatura: typeof it.criatura === "string" && it.criatura.trim() ? it.criatura.trim() : it.hunt.trim(),
+                faseAlvo: Math.round(faseAlvo),
+                concluido: !!it.concluido,
+              };
+            })
+            .filter(Boolean)
+        : [];
+      const ladderAtual = loadState().bestiaryLadder;
+      const indexAtual = ladderAtual ? ladderAtual.index : 0;
+      next.bestiaryLadder = {
+        enabled: !!raw.enabled,
+        // Índice recalculado só quando a lista muda de tamanho (edição na
+        // tela) — preserva o "onde eu estava" quando é só liga/desliga.
+        index: raw.index !== undefined ? Math.max(0, Math.round(Number(raw.index)) || 0) : indexAtual || 0,
+        itens,
+      };
     }
     saveState(next);
     sendState();
