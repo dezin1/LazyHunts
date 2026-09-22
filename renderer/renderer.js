@@ -80,7 +80,9 @@ const expedicaoListaEl = document.getElementById("expedicaoLista");
 // criatura + fase digitados à mão) saiu. No lugar entram o catálogo
 // pesquisável (`bestiaryCatalogo`, vindo pronto do protocolo — ver
 // content-injected.js) e um botão por criatura pra adicionar/avançar.
-const automationBestiaryLadderToggle = document.getElementById("automationBestiaryLadderToggle");
+// TASK-003-R2 — o checkbox discreto (`automationBestiaryLadderToggle`) saiu
+// da apresentação; `bestiaryControlEl` é onde o botão Iniciar/Pausar entra.
+const bestiaryControlEl = document.getElementById("bestiaryControl");
 const bestiaryLadderListaEl = document.getElementById("bestiaryLadderLista");
 const bestiaryCatalogoSearchInput = document.getElementById("bestiaryCatalogoSearch");
 const bestiaryCatalogoListaEl = document.getElementById("bestiaryCatalogoLista");
@@ -1003,19 +1005,24 @@ automationExpeditionToggle.addEventListener("change", () => {
 // v0.13.0 — Auto Bestiary por fase: escada de prioridade escolhida pelo
 // usuário (não é "100% de todas", é só até a fase-alvo de cada item).
 // v0.14.0 (TASK-003) — DEFEITO CORRIGIDO: esta função lia `it.creature` e
-// NUNCA incluía `it.hunt` no objeto persistido. O backend (applyConfig, em
-// content-injected.js) sempre exigiu `hunt` não-vazio pra aceitar um item —
-// então todo item adicionado pela tela antiga era descartado em silêncio no
-// backend, mesmo aparecendo normalmente na lista da UI. Fix: persiste
-// `hunt` de verdade (nunca inventado — vem do catálogo, ver
-// `renderBestiaryCatalogo`) e mantém `criatura` (com fallback pro próprio
-// nome da caçada quando a caçada não tem criatura única mapeada).
+// NUNCA incluía `it.hunt` no objeto persistido. Fix: persiste `hunt` de
+// verdade (nunca inventado — vem do catálogo, ver `renderBestiaryCatalogo`).
+// TASK-003-R2 — MODELO POR CAÇADA: uma escada tem no máximo UMA entrada por
+// `hunt` (nunca uma prioridade separada por criatura da mesma caçada).
+// `criatura` continua existindo no item — é a CRIATURA DE REFERÊNCIA, a
+// mesma que já era usada antes pra ler `economia.bestiarioFases` e decidir
+// progresso/conclusão (nenhuma semântica de automação mudou aqui, só a
+// forma de criar/editar entradas na UI). Dedup por `hunt` acontece tanto
+// aqui (renderer) quanto no `applyConfig` do backend (defesa em
+// profundidade) — mantém sempre a PRIMEIRA ocorrência de cada caçada.
 function itensBestiaryLadderPersistiveis(itens) {
+  const huntsVistos = new Set();
   return (Array.isArray(itens) ? itens : [])
     .map((it) => {
       const hunt = typeof it.hunt === "string" ? it.hunt.trim() : "";
-      if (!hunt) return null; // sem hunt válido, nem manda — já descarta aqui, não só no backend
+      if (!hunt || huntsVistos.has(hunt)) return null; // sem hunt válido, ou caçada já tem entrada
       const criatura = typeof it.criatura === "string" && it.criatura.trim() ? it.criatura.trim() : hunt;
+      huntsVistos.add(hunt);
       return { hunt, criatura, faseAlvo: Number(it.faseAlvo) || 1, concluido: !!it.concluido };
     })
     .filter(Boolean);
@@ -1037,48 +1044,105 @@ function enviarBestiaryLadder(itens, enabledOverride) {
   });
 }
 
-automationBestiaryLadderToggle.addEventListener("change", () => {
-  if (!selectedAutomationTabId) return;
-  const atual = automationState.get(selectedAutomationTabId) || {};
-  const itens = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
-  enviarBestiaryLadder(itens, automationBestiaryLadderToggle.checked);
-});
+// TASK-003-R2 (CONTROLE EXPLÍCITO) — `bestiaryLadder.enabled` (vindo do
+// `automationState` do host) é a ÚNICA fonte de verdade de "ligado ou não".
+// O checkbox discreto saiu de vez da apresentação: o botão abaixo lê e
+// escreve esse MESMO campo, pela MESMA função `enviarBestiaryLadder` que já
+// existia — não há um segundo lugar guardando esse booleano. Reaproveita a
+// classe `.autoToggleBtn`/`.off`/`.on` do botão principal "Ligar automação"
+// (mesmos ícones, mesmas cores --success/--danger) em vez de inventar um
+// estilo de botão novo pra este.
+const ICONE_PLAY = '<svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path d="M5 3.5v13l11-6.5Z"/></svg>';
+const ICONE_PAUSE = '<svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="4" width="3.5" height="12" rx="1"/><rect x="11.5" y="4" width="3.5" height="12" rx="1"/></svg>';
 
-// v0.14.0 (TASK-003) — dois itens "iguais" (mesma caçada + mesma criatura,
-// caçada sem criatura própria conta como criatura === hunt) não viram
-// duplicata na escada: clicar de novo no catálogo avança a fase-alvo do
-// item existente em vez de empilhar linha repetida.
-function mesmaCacadaECriatura(item, hunt, criatura) {
-  if (!item || item.hunt !== hunt) return false;
-  const critA = item.criatura || item.hunt;
-  const critB = criatura || hunt;
-  return critA === critB;
+function renderBestiaryControl(state) {
+  if (!bestiaryControlEl) return;
+  const ladder = state.bestiaryLadder || {};
+  const itens = Array.isArray(ladder.itens) ? ladder.itens : [];
+  const enabled = !!ladder.enabled;
+
+  if (!itens.length) {
+    bestiaryControlEl.innerHTML =
+      `<button type="button" class="autoToggleBtn off" id="bestiaryStartBtn" disabled>${ICONE_PLAY}Iniciar Bestiário</button>` +
+      '<p class="fieldHint bestiaryControlHint">Adicione ao menos uma caçada abaixo para começar.</p>';
+    return;
+  }
+
+  if (!enabled) {
+    bestiaryControlEl.innerHTML = `<button type="button" class="autoToggleBtn off" id="bestiaryStartBtn">${ICONE_PLAY}Iniciar Bestiário</button>`;
+    const startBtn = document.getElementById("bestiaryStartBtn");
+    // Regra 2 — só liga `enabled`; `itens` é a MESMA referência recebida do
+    // estado atual, sem tocar ordem/conteúdo.
+    if (startBtn) startBtn.addEventListener("click", () => enviarBestiaryLadder(itens, true));
+    return;
+  }
+
+  const indiceAtual = Number(ladder.indiceAtual);
+  const itemAtivo = Number.isFinite(indiceAtual) ? itens[indiceAtual] : null;
+  const statusLinha = itemAtivo
+    ? `caçando "${escapeHtml(itemAtivo.hunt || "?")}" — fase ${Number(itemAtivo.faseAtual) || 0} → alvo ${Number(itemAtivo.faseAlvo) || 1}`
+    : "aguardando a próxima caçada da lista";
+  bestiaryControlEl.innerHTML =
+    `<button type="button" class="autoToggleBtn on" id="bestiaryPauseBtn">${ICONE_PAUSE}Pausar Bestiário</button>` +
+    `<p class="bestiaryControlStatus"><span class="bestiaryControlStatusDot"></span>Bestiário ativo — ${statusLinha}</p>`;
+  const pauseBtn = document.getElementById("bestiaryPauseBtn");
+  // Regra 3 — pausar só desliga `enabled`; a escada inteira (ordem, níveis,
+  // concluídas) segue intacta pra retomar de onde parou.
+  if (pauseBtn) pauseBtn.addEventListener("click", () => enviarBestiaryLadder(itens, false));
 }
 
-// v0.14.0 (TASK-003) — único ponto de entrada dos botões do catálogo:
-// nunca digitado, sempre `hunt`/`criatura` reais vindos de `bestiaryCatalogo`
-// (ver content-injected.js) ou da própria escada já persistida.
-// TASK-003-R1 — `criatura` é OBRIGATÓRIA pra criar item novo: a automação
-// usa a criatura (não a caçada) pra correlacionar fase do bestiário, e
-// "Rat Cellars" (caçada) não é "Rat" (criatura) — inventar `criatura = hunt`
-// aqui geraria um item que nunca casa com o sinal real do jogo (tipo 92).
-// Itens legados que já existem com esse defeito continuam lidos
-// normalmente por `mesmaCacadaECriatura`/`itensBestiaryLadderPersistiveis`
-// (fallback preservado só do lado da LEITURA) — só a criação nova é que
-// fica proibida de inventar.
-function adicionarOuAvancarNaEscada(hunt, criatura) {
+// TASK-003-R2 — uma caçada só tem UMA entrada na escada. `entradaDaCacada`
+// é o único ponto que decide "essa hunt já está configurada?".
+function entradaDaCacada(itens, hunt) {
+  return (itens || []).find((it) => it && it.hunt === hunt) || null;
+}
+
+// Cria a entrada da caçada, pinada na criatura clicada como referência.
+// Não faz nada se a caçada já estiver na escada (clicar de novo, na mesma
+// criatura ou numa criatura irmã, nunca duplica a prioridade — pra trocar a
+// referência de uma entrada já existente é `trocarCriaturaReferencia`).
+// `criatura` é OBRIGATÓRIA e sempre real, vinda de `bestiaryCatalogo`
+// (protocolo) — nunca inventada como `hunt`.
+function adicionarCacadaNaEscada(hunt, criatura) {
   if (!selectedAutomationTabId || !hunt || !criatura) return;
   const atual = automationState.get(selectedAutomationTabId) || {};
   const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
-  const existente = itensAtuais.find((it) => mesmaCacadaECriatura(it, hunt, criatura));
-  let novo;
-  if (existente) {
-    novo = itensAtuais.map((it) =>
-      it === existente ? { ...it, faseAlvo: (Number(it.faseAlvo) || 1) + 1 } : it
-    );
-  } else {
-    novo = itensAtuais.concat([{ hunt, criatura, faseAlvo: 1, concluido: false }]);
-  }
+  if (entradaDaCacada(itensAtuais, hunt)) return;
+  const novo = itensAtuais.concat([{ hunt, criatura, faseAlvo: 1, concluido: false }]);
+  enviarBestiaryLadder(novo);
+}
+
+// TASK-003-R2 — quando uma caçada tem MAIS de uma criatura mapeada, o
+// usuário pode escolher qual delas governa o progresso/conclusão da
+// entrada (a "criatura de referência"). Isto NÃO é uma regra de conclusão
+// agregada nova — a automação sempre olhou só pra UMA criatura por item
+// (`bestiaryLadderFaseAtual`, em content-injected.js, inalterado); esta
+// função só deixa o usuário trocar QUAL criatura é essa, sem mexer em
+// faseAlvo/concluido/posição. Não existe evidência no protocolo nem no
+// projeto pra uma regra "todas as criaturas da caçada" — ver auditoria na
+// entrega desta tarefa.
+function trocarCriaturaReferencia(hunt, criatura) {
+  if (!selectedAutomationTabId || !hunt || !criatura) return;
+  const atual = automationState.get(selectedAutomationTabId) || {};
+  const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
+  const existente = entradaDaCacada(itensAtuais, hunt);
+  if (!existente || existente.criatura === criatura) return;
+  const novo = itensAtuais.map((it) => (it === existente ? { ...it, criatura } : it));
+  enviarBestiaryLadder(novo);
+}
+
+// Stepper de nível-alvo (substitui o antigo botão único "+1 fase"): o
+// usuário escolhe o nível livremente, pra cima ou pra baixo, mínimo 1. Sem
+// máximo — não existe um teto confirmado no protocolo (fases 1/2/3 só foram
+// vistas por print ao vivo de UMA criatura; outras podem ter mais).
+function ajustarFaseAlvo(hunt, delta) {
+  if (!selectedAutomationTabId || !hunt) return;
+  const atual = automationState.get(selectedAutomationTabId) || {};
+  const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
+  const existente = entradaDaCacada(itensAtuais, hunt);
+  if (!existente) return;
+  const novaFase = Math.max(1, (Number(existente.faseAlvo) || 1) + delta);
+  const novo = itensAtuais.map((it) => (it === existente ? { ...it, faseAlvo: novaFase } : it));
   enviarBestiaryLadder(novo);
 }
 
@@ -1122,7 +1186,6 @@ function renderBestiaryCatalogo(state) {
 
   const busca = (bestiaryCatalogoSearchInput.value || "").trim().toLowerCase();
   const itensLadder = (state.bestiaryLadder && state.bestiaryLadder.itens) || [];
-  const naEscada = (hunt, criatura) => itensLadder.some((it) => mesmaCacadaECriatura(it, hunt, criatura));
 
   const filtrado = !busca
     ? catalogo
@@ -1136,7 +1199,7 @@ function renderBestiaryCatalogo(state) {
   const assinatura = JSON.stringify({
     busca,
     n: catalogo.length,
-    ladder: itensLadder.map((i) => `${i.hunt}|${i.criatura}|${i.faseAlvo}`),
+    ladder: itensLadder.map((i) => `${i.hunt}|${i.criatura}`),
   });
   if (assinatura === bestiaryCatalogoAssinaturaAnterior && document.activeElement !== bestiaryCatalogoSearchInput) {
     return;
@@ -1150,26 +1213,37 @@ function renderBestiaryCatalogo(state) {
 
   bestiaryCatalogoListaEl.innerHTML = filtrado
     .map((h) => {
+      const entrada = entradaDaCacada(itensLadder, h.hunt);
       const criaturasHtml = h.criaturas.length
         ? h.criaturas
             .map((c) => {
-              const jaNaEscada = naEscada(h.hunt, c);
-              return `<span class="bestiaryCreatureChip${jaNaEscada ? " bestiaryCreatureChipNaEscada" : ""}">
+              const ehReferencia = !!entrada && entrada.criatura === c;
+              let acaoHtml;
+              if (!entrada) {
+                acaoHtml = `<button type="button" class="bestiaryCreatureAddBtn" data-add-hunt="${escapeHtml(h.hunt)}" data-add-criatura="${escapeHtml(c)}">Adicionar</button>`;
+              } else if (ehReferencia) {
+                acaoHtml = '<span class="bestiaryCreatureRefTag">acompanhando</span>';
+              } else {
+                acaoHtml = `<button type="button" class="bestiaryCreatureSwitchBtn" data-switch-hunt="${escapeHtml(h.hunt)}" data-switch-criatura="${escapeHtml(c)}">Usar esta</button>`;
+              }
+              return `<span class="bestiaryCreatureChip${ehReferencia ? " bestiaryCreatureChipNaEscada" : ""}">
                 ${escapeHtml(c)}
-                <button type="button" class="bestiaryCreatureAddBtn" data-add-hunt="${escapeHtml(h.hunt)}" data-add-criatura="${escapeHtml(c)}">${jaNaEscada ? "+1 fase" : "+ adicionar"}</button>
+                ${acaoHtml}
               </span>`;
             })
             .join("")
         : '<span class="fieldHint">Nenhuma criatura mapeada para essa caçada ainda.</span>';
       const tiersTxt = h.tiers.length ? escapeHtml(h.tiers.join(", ")) : "—";
       const forcaTxt = h.forca != null ? fmtNum(h.forca) : "?";
-      // TASK-003-R1 — o card NUNCA tem uma ação "adicionar a caçada inteira":
-      // sem criatura mapeada, não existe nenhum botão aqui (só a mensagem
-      // acima) — a escada correlaciona fase por CRIATURA, então um item sem
-      // criatura real não tem como a automação nunca confirmar progresso.
+      // TASK-003-R1/R2 — o card NUNCA tem uma ação "adicionar a caçada
+      // inteira sem escolher criatura": sem criatura mapeada, não existe
+      // nenhum botão (só a mensagem acima). A entrada da escada é por HUNT
+      // agora, mas o progresso continua lido de UMA criatura de referência
+      // real — nunca inventada.
       return `<div class="bestiaryCatalogCard">
         <div class="bestiaryCatalogCardHeader">
           <b>${escapeHtml(h.hunt)}</b>
+          ${entrada ? '<span class="bestiaryCatalogCardNaEscada">Na escada</span>' : ""}
         </div>
         <div class="bestiaryCatalogMeta">Tiers: ${tiersTxt} · Força: ${forcaTxt}</div>
         <div class="bestiaryCatalogCreatures">${criaturasHtml}</div>
@@ -1177,15 +1251,14 @@ function renderBestiaryCatalogo(state) {
     })
     .join("");
 
-  // TASK-003-R1 — `data-add-criatura` só existe nos botões por criatura
-  // mapeada (o botão genérico do cabeçalho foi removido acima); por isso
-  // não há mais fallback `|| hunt` aqui — um valor vazio significa bug de
-  // marcação, não "caçada inteira", e nesse caso é melhor não criar nada.
   bestiaryCatalogoListaEl.querySelectorAll("button[data-add-hunt]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const hunt = btn.getAttribute("data-add-hunt");
-      const criatura = btn.getAttribute("data-add-criatura");
-      adicionarOuAvancarNaEscada(hunt, criatura);
+      adicionarCacadaNaEscada(btn.getAttribute("data-add-hunt"), btn.getAttribute("data-add-criatura"));
+    });
+  });
+  bestiaryCatalogoListaEl.querySelectorAll("button[data-switch-hunt]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      trocarCriaturaReferencia(btn.getAttribute("data-switch-hunt"), btn.getAttribute("data-switch-criatura"));
     });
   });
 }
@@ -1199,7 +1272,7 @@ function renderBestiaryLadder(state) {
 
   if (!itens.length) {
     bestiaryLadderListaEl.innerHTML =
-      '<p class="fieldHint">Nenhuma criatura na escada ainda. Adicione pelo catálogo acima, na ordem de prioridade.</p>';
+      '<p class="fieldHint">Nenhuma caçada na escada ainda. Adicione pelo catálogo acima, na ordem de prioridade.</p>';
     return;
   }
 
@@ -1210,9 +1283,15 @@ function renderBestiaryLadder(state) {
     const done = !!it.concluido;
     const ativo = !done && i === indiceAtual;
     const huntLabel = it.hunt || it.criatura || "?";
+    // TASK-003-R2 — composição informativa: a criatura de referência (a que
+    // decide progresso/conclusão) sempre aparece; se a caçada tem outras
+    // criaturas mapeadas além dela, isso vira só um número extra ao lado —
+    // sem inventar progresso agregado pras outras.
+    const criaturas = Array.isArray(it.criaturas) ? it.criaturas : [];
+    const outras = criaturas.length ? criaturas.length - 1 : 0;
     const criaturaSubLine =
       it.criatura && it.criatura !== huntLabel
-        ? `<div class="bestiaryLadderRowCriatura">${escapeHtml(it.criatura)}</div>`
+        ? `<div class="bestiaryLadderRowCriatura">${escapeHtml(it.criatura)}${outras > 0 ? ` <span class="fieldHint">(+${outras} mapeada${outras > 1 ? "s" : ""})</span>` : ""}</div>`
         : "";
     return `<div class="bestiaryLadderRow${ativo ? " bestiaryLadderRowAtivo" : ""}${done ? " expDone" : ""}" data-idx="${i}">
       <div class="expHead">
@@ -1224,12 +1303,20 @@ function renderBestiaryLadder(state) {
       <div class="bestiaryLadderRowMeta">
         ${it.abatesAtuais != null ? `<span class="fieldHint">${fmtNum(it.abatesAtuais)} abates</span>` : "<span></span>"}
         <label class="bestiaryLadderConcluidoLabel">
-          <input type="checkbox" data-ladder-done="${i}"${done ? " checked" : ""} /> já concluída
+          <input type="checkbox" data-ladder-done="${i}"${done ? " checked" : ""} /> concluída
         </label>
-        <button type="button" class="bestiaryLadderProximaFaseBtn" data-ladder-nextfase="${i}" title="Aumentar fase-alvo manualmente">+ Próxima fase</button>
-        <button type="button" data-ladder-up="${i}" title="Subir prioridade"${i === 0 ? " disabled" : ""}>▲</button>
-        <button type="button" data-ladder-down="${i}" title="Descer prioridade"${i === itens.length - 1 ? " disabled" : ""}>▼</button>
-        <button type="button" data-ladder-remove="${i}" title="Remover">✕</button>
+      </div>
+      <div class="bestiaryLadderRowActions">
+        <div class="bestiaryLadderStepper" role="group" aria-label="Nível-alvo de ${escapeHtml(huntLabel)}">
+          <button type="button" data-ladder-fase-down="${i}" aria-label="Diminuir nível-alvo"${faseAlvo <= 1 ? " disabled" : ""}>−</button>
+          <span class="bestiaryLadderStepperValue">${faseAlvo}</span>
+          <button type="button" data-ladder-fase-up="${i}" aria-label="Aumentar nível-alvo">+</button>
+        </div>
+        <div class="bestiaryLadderMoveGroup">
+          <button type="button" data-ladder-up="${i}" title="Subir prioridade"${i === 0 ? " disabled" : ""}>▲</button>
+          <button type="button" data-ladder-down="${i}" title="Descer prioridade"${i === itens.length - 1 ? " disabled" : ""}>▼</button>
+          <button type="button" data-ladder-remove="${i}" title="Remover">✕</button>
+        </div>
       </div>
     </div>`;
   });
@@ -1243,12 +1330,16 @@ function renderBestiaryLadder(state) {
       enviarBestiaryLadder(novo);
     });
   });
-  bestiaryLadderListaEl.querySelectorAll("button[data-ladder-nextfase]").forEach((btn) => {
+  bestiaryLadderListaEl.querySelectorAll("button[data-ladder-fase-up]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const i = Number(btn.getAttribute("data-ladder-nextfase"));
-      const novo = itens.slice();
-      novo[i] = { ...novo[i], faseAlvo: (Number(novo[i].faseAlvo) || 1) + 1 };
-      enviarBestiaryLadder(novo);
+      const i = Number(btn.getAttribute("data-ladder-fase-up"));
+      ajustarFaseAlvo(itens[i] && itens[i].hunt, 1);
+    });
+  });
+  bestiaryLadderListaEl.querySelectorAll("button[data-ladder-fase-down]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.getAttribute("data-ladder-fase-down"));
+      ajustarFaseAlvo(itens[i] && itens[i].hunt, -1);
     });
   });
   bestiaryLadderListaEl.querySelectorAll("button[data-ladder-up]").forEach((btn) => {
@@ -2757,7 +2848,10 @@ function syncAutomationPanel() {
   // manuais (removidos). A busca do catálogo tem seu próprio guard dentro de
   // `renderBestiaryCatalogo` (assinatura + `document.activeElement`), então
   // aqui não precisa mais nada além de sempre re-renderizar.
-  automationBestiaryLadderToggle.checked = !!(state.bestiaryLadder && state.bestiaryLadder.enabled);
+  // TASK-003-R2 — `renderBestiaryControl` lê `bestiaryLadder.enabled` direto
+  // do estado (única fonte de verdade); não existe mais checkbox pra
+  // sincronizar aqui.
+  renderBestiaryControl(state);
   renderBestiaryLadder(state);
   automationTrainStaminaToggle.checked = !!state.trainOnStaminaZero;
   automationTrainIdleToggle.checked = !!state.trainOnIdleInCity;

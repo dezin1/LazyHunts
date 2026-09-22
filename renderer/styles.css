@@ -1362,72 +1362,96 @@ body {
    atuais, "já concluída", reordenar, remover) por item da escada. */
 /* v0.14.0 (TASK-003) — fluxo guiado: o formulário manual saiu (ver
    renderer.js); entram o catálogo pesquisável e o destaque do item ativo. */
-#bestiaryLadderLista { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
-.bestiaryLadderRow { position: relative; }
-.bestiaryLadderRowAtivo {
-  background: var(--bg-inset);
-  border-radius: 6px;
-  padding: 8px;
-  margin: -8px;
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-.bestiaryLadderRowCriatura {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: -2px;
-}
-.bestiaryLadderRowMeta {
+/* TASK-003-R2 — redesenho completo: modelo por CAÇADA (não por criatura) +
+   controle explícito Iniciar/Pausar + catálogo/escada em `.bestiaryLayout`.
+   Empilhados por padrão (o caso real aqui: menu lateral de 250px ou janela
+   flutuante de 268px, ver `#sidebar`/`#botFloat` acima — nenhum dos dois é
+   redimensionável hoje). Sem rolagem interna nova em lugar nenhum: quem
+   rola é sempre `#automationPanel` (regra já registrada na linha ~432 —
+   "não pode ter barra de rolagem" numa caixa dentro da outra). */
+
+.bestiaryControl { display: flex; flex-direction: column; gap: 8px; }
+.bestiaryControl > .autoToggleBtn { margin-top: 0; }
+.bestiaryControlHint { margin: 0; }
+.bestiaryControlStatus {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  margin: 0;
   font-size: 11px;
-  color: var(--text-muted);
-}
-.bestiaryLadderRowMeta button {
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-inset);
   color: var(--text-secondary);
-  border-radius: 4px;
-  width: 22px;
-  height: 22px;
-  line-height: 1;
-  cursor: pointer;
-  font-size: 11px;
 }
-.bestiaryLadderRowMeta button:hover { background: var(--bg-hover); }
-.bestiaryLadderRowMeta button:disabled { opacity: 0.35; cursor: default; }
-.bestiaryLadderProximaFaseBtn {
-  width: auto !important;
-  padding: 0 8px;
-  font-size: 10.5px !important;
-  white-space: nowrap;
-}
-.bestiaryLadderConcluidoLabel {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  white-space: nowrap;
-  font-size: 10.5px;
-  opacity: 0.75;
+.bestiaryControlStatusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
 }
 
-/* Catálogo guiado — "Caçadas disponíveis". */
-#bestiaryCatalogoSearch { margin-bottom: 10px; }
-.bestiaryCatalogoLista {
+/* `container-type` vai no ANCESTRAL (`#autoTabPanelBestiary`, a aba
+   inteira — já existe, nenhum wrapper novo), nunca no próprio `.bestiaryLayout`:
+   um elemento não muda de forma confiável sua PRÓPRIA `display` via
+   `@container` medindo a si mesmo (testado ao vivo nesta tarefa — a regra
+   sozinha em `.bestiaryLayout` fica sempre em `flex`, nunca vira `grid`,
+   mesmo com o container medindo mais que o breakpoint). Responde à largura
+   do PRÓPRIO painel, nunca à da janela — importante porque a janela pode
+   ser enorme com o menu lateral ainda estreito (a diferença que faria um
+   `@media` de viewport errar). */
+#autoTabPanelBestiary { container-type: inline-size; }
+.bestiaryLayout {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 320px;
-  overflow-y: auto;
 }
-.bestiaryCatalogCard {
+@container (min-width: 480px) {
+  .bestiaryLayout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    column-gap: 20px;
+    align-items: start;
+  }
+  /* Em 2 colunas as seções ficam lado a lado — a 2ª não pode carregar a
+     borda/respiro de "nova seção empilhada", que só faz sentido no modo de
+     1 coluna (`.automationGroup` normal). */
+  .bestiaryLadderSection { padding-top: 0; margin-top: 0; border-top: none; }
+}
+
+.bestiaryCatalogHint { margin: 0 0 8px; font-size: 10.5px; }
+
+/* Busca compacta, visualmente integrada — pílula discreta em vez da
+   moldura genérica de input de formulário, pra já sugerir "isto filtra". */
+.bestiarySearchInput {
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-radius: 999px;
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 8px 10px;
   background: var(--bg-inset);
+  font-size: 11.5px;
 }
-.bestiaryCatalogCardHeader { font-size: 12px; margin-bottom: 6px; }
+.bestiarySearchInput:focus { border-color: var(--accent); outline: none; }
+
+/* Cada caçada é uma linha leve com fio divisório, não um card grande com
+   borda+fundo próprios — menos peso visual, menos altura desperdiçada. */
+.bestiaryCatalogoLista { display: flex; flex-direction: column; }
+.bestiaryCatalogCard { padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
+.bestiaryCatalogCard:last-child { border-bottom: none; padding-bottom: 0; }
+.bestiaryCatalogCardHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 3px;
+}
+.bestiaryCatalogCardNaEscada {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--success);
+  white-space: nowrap;
+}
+.bestiaryCatalogMeta { margin: 0 0 6px; font-size: 10.5px; color: var(--text-muted); }
 .bestiaryCatalogCreatures { display: flex; flex-wrap: wrap; gap: 6px; }
 .bestiaryCreatureChip {
   display: inline-flex;
@@ -1441,18 +1465,121 @@ body {
   background: var(--bg-field);
 }
 .bestiaryCreatureChipNaEscada { border-color: var(--success); }
-.bestiaryCreatureAddBtn {
+.bestiaryCreatureAddBtn,
+.bestiaryCreatureSwitchBtn {
   border: none;
-  background: var(--accent);
-  color: var(--bg-field);
   border-radius: 999px;
   padding: 2px 8px;
   font-size: 10.5px;
   cursor: pointer;
   white-space: nowrap;
 }
-.bestiaryCreatureChipNaEscada .bestiaryCreatureAddBtn { background: var(--success); }
-.bestiaryCatalogMeta { margin-top: 6px; margin-bottom: 0; }
+.bestiaryCreatureAddBtn { background: var(--accent); color: var(--bg-field); }
+.bestiaryCreatureSwitchBtn {
+  background: var(--bg-button);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+.bestiaryCreatureRefTag {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--success);
+  padding: 2px 8px 2px 0;
+  white-space: nowrap;
+}
+
+/* "Minha escada" — maior prioridade visual da aba. Item ativo (herdado,
+   inalterado) continua sendo o único com fundo/realce; os demais só têm
+   espaçamento (`gap` na lista), sem borda extra por linha. */
+#bestiaryLadderLista { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.bestiaryLadderRow { position: relative; }
+.bestiaryLadderRowAtivo {
+  background: var(--bg-inset);
+  border-radius: 6px;
+  padding: 8px;
+  margin: -8px;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.bestiaryLadderRowCriatura {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: -2px;
+}
+/* Linha 1 (metadados): abates + "concluída". Linha 2 (`...Actions`):
+   stepper de nível + mover/remover. Duas linhas curtas, cada uma com só 2
+   grupos — é o que evita a colisão/quebra confusa que existia quando tudo
+   (checkbox, +1 fase, ▲▼✕) brigava numa linha só. */
+.bestiaryLadderRowMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.bestiaryLadderConcluidoLabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-size: 10.5px;
+  opacity: 0.75;
+}
+.bestiaryLadderRowActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+.bestiaryLadderStepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 2px 4px;
+  background: var(--bg-inset);
+  flex-shrink: 0;
+}
+.bestiaryLadderStepper button {
+  border: none;
+  background: var(--bg-button);
+  color: var(--text-secondary);
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+.bestiaryLadderStepper button:hover { background: var(--bg-hover); }
+.bestiaryLadderStepper button:disabled { opacity: 0.35; cursor: default; }
+.bestiaryLadderStepperValue {
+  min-width: 14px;
+  text-align: center;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-secondary-strong);
+}
+.bestiaryLadderMoveGroup { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.bestiaryLadderMoveGroup button {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  cursor: pointer;
+  font-size: 10.5px;
+  padding: 0;
+}
+.bestiaryLadderMoveGroup button:hover { background: var(--bg-hover); }
+.bestiaryLadderMoveGroup button:disabled { opacity: 0.35; cursor: default; }
 
 /* v0.11.11 — bloco de lucro real da aba Análise. Linha rótulo/valor, com o
    valor em tabular-nums pra as colunas baterem. */

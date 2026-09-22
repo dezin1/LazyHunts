@@ -3218,12 +3218,37 @@
       // espírito do `expedicaoMapa`: o host só desenha o que já vem pronto.
       bestiaryLadder: (() => {
         const ladder = cfg.bestiaryLadder || { enabled: false, index: 0, itens: [] };
+        // TASK-003-R2 — a entrada continua pinada numa CRIATURA DE
+        // REFERÊNCIA (`it.criatura`, mesmo campo/mesma semântica de sempre —
+        // é o que `bestiaryLadderFaseAtual`/`avaliarAvancoDoBestiaryLadder`
+        // já usavam pra decidir progresso/conclusão, sem mudança nenhuma
+        // aqui). O que muda é só INFORMATIVO: `criaturas` traz o progresso de
+        // TODAS as criaturas mapeadas da caçada (não só a de referência),
+        // pra a tela mostrar composição sem inventar uma regra de "conclusão
+        // agregada" que não existe em lugar nenhum do protocolo/projeto —
+        // ver nota extensa no CLAUDE.md sobre essa lacuna.
         const itens = (ladder.itens || []).map((it) => {
           const chave = nomeParaChaveBestiario(it.criatura || it.hunt);
+          const huntCatalogo = guild.cacadas.find((h) => h && h.name === it.hunt);
+          const nomesCriaturas = huntCatalogo && Array.isArray(huntCatalogo.monsters)
+            ? huntCatalogo.monsters.map((m) => (m && m.name ? String(m.name) : "")).filter(Boolean)
+            : it.criatura
+              ? [it.criatura]
+              : [];
+          const criaturas = nomesCriaturas.map((nome) => {
+            const chaveNome = nomeParaChaveBestiario(nome);
+            return {
+              nome,
+              referencia: nome === (it.criatura || it.hunt),
+              faseAtual: economia.bestiarioFases.get(chaveNome) || 0,
+              abatesAtuais: economia.bestiario.get(chaveNome) ?? null,
+            };
+          });
           return {
             ...it,
             faseAtual: economia.bestiarioFases.get(chave) || 0,
             abatesAtuais: economia.bestiario.get(chave) ?? null,
+            criaturas,
           };
         });
         const atual = bestiaryLadderItemAtual({ ...cfg, bestiaryLadder: { ...ladder, itens } });
@@ -7047,17 +7072,37 @@
     // (lista editada por completo, igual `rotateCharacters`) — nunca confia
     // cegamente no que vem do host: item sem `hunt` ou com `faseAlvo`
     // inválido é descartado em vez de gravado quebrado.
+    // TASK-003-R2 — modelo por CAÇADA: uma única entrada por `hunt` na
+    // escada (nunca uma posição de prioridade por criatura). O renderer já
+    // não deveria mandar duplicata, mas esta validação não confia nisso —
+    // dedup aqui também, mantendo a PRIMEIRA ocorrência de cada `hunt`
+    // (preserva a ordem de prioridade que o usuário montou) e descartando
+    // qualquer repetição. Isso também cobre configs legadas salvas antes
+    // desta mudança, que podiam ter duas entradas hunt+criatura diferentes
+    // pra mesma caçada — nada é perdido além da posição redundante em si
+    // (progresso nunca fica armazenado no item, é sempre relido de
+    // `economia.bestiarioFases`/`economia.bestiario` na hora).
     if (partial.bestiaryLadder && typeof partial.bestiaryLadder === "object") {
       const raw = partial.bestiaryLadder;
+      const huntsVistos = new Set();
       const itens = Array.isArray(raw.itens)
         ? raw.itens
             .map((it) => {
               if (!it || typeof it.hunt !== "string" || !it.hunt.trim()) return null;
+              const hunt = it.hunt.trim();
+              if (huntsVistos.has(hunt)) return null; // já existe uma entrada pra essa caçada
               const faseAlvo = Number(it.faseAlvo);
               if (!Number.isFinite(faseAlvo) || faseAlvo < 1) return null;
+              huntsVistos.add(hunt);
               return {
-                hunt: it.hunt.trim(),
-                criatura: typeof it.criatura === "string" && it.criatura.trim() ? it.criatura.trim() : it.hunt.trim(),
+                hunt,
+                // `criatura` é a CRIATURA DE REFERÊNCIA da entrada — mesmo
+                // campo/semântica de sempre, usada por
+                // `bestiaryLadderFaseAtual`/`avaliarAvancoDoBestiaryLadder`
+                // pra decidir progresso e conclusão. Não é uma "criatura
+                // inventada": vem do catálogo real (renderer só manda nomes
+                // de `bestiaryCatalogo`) ou de configuração legada já válida.
+                criatura: typeof it.criatura === "string" && it.criatura.trim() ? it.criatura.trim() : hunt,
                 faseAlvo: Math.round(faseAlvo),
                 concluido: !!it.concluido,
               };

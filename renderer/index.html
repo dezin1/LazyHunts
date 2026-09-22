@@ -300,28 +300,32 @@
                Expedição (só entra em ação com ela desligada). -->
           <div class="tabPanel" id="autoTabPanelBestiary" data-tab="bestiary" hidden>
             <section class="automationSection automationGroup">
-              <h4 class="automationGroupTitle">Auto Bestiary por fase</h4>
-              <label class="switchRow groupSwitchRow">
-                <span>Subir a escada do bestiário</span>
-                <input type="checkbox" id="automationBestiaryLadderToggle" />
-              </label>
+              <h4 class="automationGroupTitle">Auto Bestiary por caçada</h4>
+              <div id="bestiaryControl" class="bestiaryControl"></div>
               <details class="hintMore">
-                <summary>Caça cada caçada da lista até a fase escolhida, na ordem de prioridade.</summary>
-                <p>Ao atingir a fase-alvo de um item, a próxima caçada da lista assume. O sinal é o mesmo que o jogo usa pra avisar a fase batida, então chega no instante certo — mas só na transição: uma criatura que já passou da fase-alvo antes de entrar na lista não avança sozinha, precisa marcar "já concluída" manualmente. Só age com a Expedição desligada.</p>
+                <summary>Caça cada caçada da lista até o nível escolhido, na ordem de prioridade.</summary>
+                <p>Ao atingir o nível-alvo de uma caçada, a próxima da lista assume. O sinal é o mesmo que o jogo usa pra avisar a fase batida, então chega no instante certo — mas só na transição: uma caçada que já passou do nível-alvo antes de entrar na lista não avança sozinha, precisa marcar "já concluída" manualmente. Só age com a Expedição desligada.</p>
               </details>
             </section>
 
-            <section class="automationSection automationGroup">
-              <h4 class="automationGroupTitle">Caçadas disponíveis</h4>
-              <p class="fieldHint">Mapeadas automaticamente pelo jogo — busque e clique em "+ Adicionar" na criatura que quer subir na escada.</p>
-              <input type="text" id="bestiaryCatalogoSearch" placeholder="Buscar caçada ou criatura…" />
-              <div id="bestiaryCatalogoLista" class="bestiaryCatalogoLista"></div>
-            </section>
+            <!-- TASK-003-R2 — catálogo e escada empilham em tela estreita (o
+                 caso comum: menu lateral de 250px ou janela flutuante de
+                 268px). `.bestiaryLayout` só vira 2 colunas via @container
+                 quando o próprio painel (não a janela) tiver espaço de
+                 verdade — ver renderer/styles.css. -->
+            <div class="bestiaryLayout">
+              <section class="automationSection automationGroup bestiaryCatalogSection">
+                <h4 class="automationGroupTitle">Caçadas disponíveis</h4>
+                <p class="fieldHint bestiaryCatalogHint">Clique numa criatura mapeada para adicionar a caçada à escada.</p>
+                <input type="text" id="bestiaryCatalogoSearch" class="bestiarySearchInput" placeholder="Buscar caçada ou criatura…" />
+                <div id="bestiaryCatalogoLista" class="bestiaryCatalogoLista"></div>
+              </section>
 
-            <section class="automationSection automationGroup">
-              <h4 class="automationGroupTitle">Minha escada</h4>
-              <div id="bestiaryLadderLista"></div>
-            </section>
+              <section class="automationSection automationGroup bestiaryLadderSection">
+                <h4 class="automationGroupTitle">Minha escada</h4>
+                <div id="bestiaryLadderLista"></div>
+              </section>
+            </div>
           </div>
 
           <!-- v0.9.23 — analyzer próprio do bot. Tudo montado com o que a
