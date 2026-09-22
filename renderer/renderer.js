@@ -316,14 +316,16 @@ async function baixarBaseline(tab, pacote) {
 }
 
 function sendAutomationCommand(tabId, msg) {
-  if (!guestReady.has(tabId)) return;
+  if (!guestReady.has(tabId)) return false;
   const wv = getWebview(tabId);
-  if (!wv) return;
+  if (!wv) return false;
   try {
     wv.send("hm:command", msg);
+    return true;
   } catch (err) {
     // conta pode ter fechado/recarregado bem nesse instante — não é motivo
     // pra travar o resto da interface.
+    return false;
   }
 }
 
@@ -432,11 +434,22 @@ function ensureWebview(tab) {
       baixarBaseline(tab, (e.args && e.args[0]) || null);
       return;
     }
+    if (e.channel === "hm:render-brake") {
+      renderBrakeConfirmations.set(tab.id, { ...((e.args && e.args[0]) || {}), em: Date.now() });
+      renderRenderBrakeStatus();
+      return;
+    }
     if (e.channel !== "hm:state") return;
     const prev = automationState.get(tab.id) || {};
     automationState.set(tab.id, { ...prev, ...e.args[0] });
     const wasReady = guestReady.has(tab.id);
     guestReady.add(tab.id);
+    // Não grava "aplicado" antes de a conta poder receber o comando. Isso
+    // também força o reenvio imediato após carregar/recarregar um webview.
+    if (!wasReady) {
+      freioAplicado.delete(tab.id);
+      aplicarFreioDeRender();
+    }
     // v0.9.16 — assim que a conta responde pela primeira vez, manda pra ela o
     // catálogo salvo em disco (se já tiver um), pra ela nunca precisar
     // remapear o que outra conta já mapeou.
@@ -2241,6 +2254,7 @@ function montarPainelDeDesempenho() {
 const FREIO_KEY = "hm_freio_render_v1";
 let janelaVisivel = true;
 const freioAplicado = new Map(); // tabId -> boolean, pra não reenviar o mesmo comando
+const renderBrakeConfirmations = new Map(); // tabId -> confirmação do preload/página
 
 function freioLigado() {
   try {
@@ -2265,18 +2279,44 @@ function aplicarFreioDeRender() {
   for (const tab of tabs) {
     const alvo = deveFrear(tab.id);
     if (freioAplicado.get(tab.id) === alvo) continue;
-    freioAplicado.set(tab.id, alvo);
-    sendAutomationCommand(tab.id, { type: "setRenderBrake", payload: { on: alvo } });
+    // O webview ainda pode estar iniciando. Só memoriza o estado depois de
+    // enviar: assim o primeiro hm:state reenvia imediatamente, sem esperar a
+    // reconciliação de 30 segundos.
+    if (sendAutomationCommand(tab.id, { type: "setRenderBrake", payload: { on: alvo } })) {
+      freioAplicado.set(tab.id, alvo);
+    }
   }
+  renderRenderBrakeStatus();
 }
 
 // Soltar o freio de todas — usado ao desligar o toggle, pra nenhuma conta
 // ficar presa a 2 fps por causa de um estado antigo.
 function soltarFreioDeTodas() {
   for (const tab of tabs) {
-    freioAplicado.set(tab.id, false);
-    sendAutomationCommand(tab.id, { type: "setRenderBrake", payload: { on: false } });
+    if (sendAutomationCommand(tab.id, { type: "setRenderBrake", payload: { on: false } })) {
+      freioAplicado.set(tab.id, false);
+    }
   }
+  renderRenderBrakeStatus();
+}
+
+function renderRenderBrakeStatus() {
+  const el = document.getElementById("renderBrakeStatus");
+  if (!el) return;
+  if (!freioLigado()) {
+    el.textContent = "Freio de renderização desligado.";
+    return;
+  }
+  const alvo = tabs.filter((tab) => deveFrear(tab.id));
+  const confirmado = alvo.filter((tab) => {
+    const r = renderBrakeConfirmations.get(tab.id);
+    return r && r.ligado === true && r.atributoAplicado === true && r.hookInstalado === true;
+  });
+  if (!alvo.length) {
+    el.textContent = "Freio ligado; nenhuma conta fica oculta neste modo.";
+    return;
+  }
+  el.textContent = `Freio ligado: ${confirmado.length}/${alvo.length} conta(s) oculta(s) confirmada(s).`;
 }
 
 function iniciarFreioDeRender() {
@@ -2291,6 +2331,7 @@ function iniciarFreioDeRender() {
       }
       if (toggle.checked) aplicarFreioDeRender();
       else soltarFreioDeTodas();
+      renderRenderBrakeStatus();
     });
   }
 

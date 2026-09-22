@@ -1579,13 +1579,23 @@
   // e o HUD do Angular — que é justamente de onde a automação lê capacidade,
   // stamina, botões e tracker de expedição. Frear o Phaser não cega o bot.
   const FREIO_MARCA = "data-hm-freio";
+  const FREIO_MARCA_HOOK = "data-hm-freio-hook";
+  const FREIO_EVENTO = "hm:render-brake";
   // 30 frames absorvidos ≈ 2 desenhos por segundo a 60Hz.
   const FREIO_PULOS = 30;
 
-  function codigoDoFreioNaPagina(marca) {
+  function codigoDoFreioNaPagina(marca, marcaHook, evento) {
     return `(() => {
       try {
-        if (window.__hmFreioInstalado) return "ja";
+        const avisar = (freando) => {
+          try { document.dispatchEvent(new CustomEvent(${JSON.stringify(evento)}, { detail: { hookInstalado: true, ligado: !!freando } })); } catch (e) {}
+        };
+        if (window.__hmFreioInstalado) {
+          const ligado = document.documentElement.getAttribute(${JSON.stringify(marca)}) === "1";
+          document.documentElement.setAttribute(${JSON.stringify(marcaHook)}, "1");
+          avisar(ligado);
+          return "ja";
+        }
         window.__hmFreioInstalado = true;
         const rafNativo = window.requestAnimationFrame.bind(window);
 
@@ -1595,9 +1605,13 @@
         // cada frame.
         let freando = false;
         const lerFlag = () => {
-          try { freando = document.documentElement.getAttribute(${JSON.stringify(marca)}) === "1"; } catch (e) {}
+          try {
+            freando = document.documentElement.getAttribute(${JSON.stringify(marca)}) === "1";
+            avisar(freando);
+          } catch (e) {}
         };
         lerFlag();
+        document.documentElement.setAttribute(${JSON.stringify(marcaHook)}, "1");
         try {
           new MutationObserver(lerFlag).observe(document.documentElement, {
             attributes: true,
@@ -1961,6 +1975,12 @@
       },
       watchers: [...perfDiagnostico.watchers.entries()].map(([watcher, r]) => ({ watcher, ...r, execucoesPorMinuto: porMinuto(r.execucoes), acoesPorMinuto: porMinuto(r.acoes), domReadsPorMinuto: porMinuto(r.domQueries) })),
       timersAtivos: [...perfDiagnostico.watchers.entries()].map(([watcher, r]) => ({ watcher, intervaloMs: r.intervaloMs, feature: r.feature })),
+      // Um retrato do interruptor no instante do download. Não é polling nem
+      // mede DOM do jogo: são só os atributos de comunicação do próprio Swag.
+      renderBrake: {
+        ligado: !!(document.documentElement && document.documentElement.getAttribute(FREIO_MARCA) === "1"),
+        hookInstalado: !!(document.documentElement && document.documentElement.getAttribute(FREIO_MARCA_HOOK) === "1"),
+      },
       trocaPersonagem: { eventos: perfDiagnostico.trocaPersonagem.eventos.slice() },
     };
   }
@@ -2143,11 +2163,29 @@
         try { diagRegistrar(String(ev.detail)); } catch (e) {}
       });
 
+      // Confirmação orientada a evento: não consulta o DOM em polling. O
+      // renderer só chama uma conta "freada" depois de receber este sinal do
+      // mundo principal que realmente contém o requestAnimationFrame do jogo.
+      document.addEventListener(FREIO_EVENTO, (ev) => {
+        try {
+          const estado = (ev && ev.detail) || {};
+          sendToHost("hm:render-brake", {
+            ligado: estado.ligado === true,
+            atributoAplicado: document.documentElement.getAttribute(FREIO_MARCA) === "1",
+            hookInstalado: estado.hookInstalado === true,
+          });
+          perfRegistrarTroca("render:freio", {
+            ligado: estado.ligado === true,
+            hookInstalado: estado.hookInstalado === true,
+          });
+        } catch (e) {}
+      });
+
       // v0.12.3 — o freio de render vai pela mesma porta: também precisa rodar
       // no MUNDO DA PÁGINA (o `requestAnimationFrame` que o Phaser usa é o da
       // página, não o nosso), e o canal `hm:proto-hook` é só um cano pro
       // `executeJavaScript` do host.
-      sendToHost("hm:proto-hook", codigoDoFreioNaPagina(FREIO_MARCA));
+      sendToHost("hm:proto-hook", codigoDoFreioNaPagina(FREIO_MARCA, FREIO_MARCA_HOOK, FREIO_EVENTO));
 
       const codigo = codigoDoGanchoNaPagina(
         PROTO_EVENTO,
@@ -6850,8 +6888,17 @@
         try {
           const raiz = document.documentElement;
           if (!raiz) break;
-          if (msg.payload && msg.payload.on) raiz.setAttribute(FREIO_MARCA, "1");
+          const ligado = !!(msg.payload && msg.payload.on);
+          if (ligado) raiz.setAttribute(FREIO_MARCA, "1");
           else raiz.removeAttribute(FREIO_MARCA);
+          // Confirma a chegada do comando imediatamente. A confirmação do
+          // gancho no mundo da página vem separada pelo evento acima.
+          sendToHost("hm:render-brake", {
+            ligado,
+            atributoAplicado: raiz.getAttribute(FREIO_MARCA) === "1",
+            hookInstalado: raiz.getAttribute(FREIO_MARCA_HOOK) === "1",
+          });
+          perfRegistrarTroca("render:freio-comando", { ligado });
         } catch (err) {
           // sem <html> ainda — o host reenvia na próxima troca de conta
         }
