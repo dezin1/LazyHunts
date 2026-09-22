@@ -1007,22 +1007,27 @@ automationExpeditionToggle.addEventListener("change", () => {
 // v0.14.0 (TASK-003) — DEFEITO CORRIGIDO: esta função lia `it.creature` e
 // NUNCA incluía `it.hunt` no objeto persistido. Fix: persiste `hunt` de
 // verdade (nunca inventado — vem do catálogo, ver `renderBestiaryCatalogo`).
-// TASK-003-R2 — MODELO POR CAÇADA: uma escada tem no máximo UMA entrada por
-// `hunt` (nunca uma prioridade separada por criatura da mesma caçada).
-// `criatura` continua existindo no item — é a CRIATURA DE REFERÊNCIA, a
-// mesma que já era usada antes pra ler `economia.bestiarioFases` e decidir
-// progresso/conclusão (nenhuma semântica de automação mudou aqui, só a
-// forma de criar/editar entradas na UI). Dedup por `hunt` acontece tanto
-// aqui (renderer) quanto no `applyConfig` do backend (defesa em
-// profundidade) — mantém sempre a PRIMEIRA ocorrência de cada caçada.
+// TASK-003-R2 — MODELO POR CAÇADA: a CRIAÇÃO nova (`adicionarCacadaNaEscada`,
+// só ela) nunca duplica uma `hunt` já presente. `criatura` continua sendo a
+// CRIATURA DE REFERÊNCIA, mesma semântica de sempre pra
+// `bestiaryLadderFaseAtual`/`avaliarAvancoDoBestiaryLadder`.
+// TASK-003-R2.1 — REVERTIDO: esta função chegou a deduplicar por `hunt`
+// automaticamente aqui (mantendo só a primeira ocorrência). Isso é
+// DESTRUTIVO pra configuração legada: como TODA operação (iniciar, pausar,
+// mexer no stepper de qualquer item, marcar concluída) passa por
+// `enviarBestiaryLadder` → aqui, uma duplicata legada válida (duas entradas
+// da mesma hunt com criaturas de referência diferentes, de antes desta
+// mudança de modelo) desaparecia silenciosamente na PRÓXIMA ação trivial
+// qualquer, mesmo sem o usuário mexer nela. Esta função agora só valida
+// (`hunt` não vazio, `faseAlvo` numérico ≥ 1) — nunca remove uma entrada
+// por ela ter a mesma `hunt` que outra. Duplicata só não é CRIADA por
+// `adicionarCacadaNaEscada`; uma que já existe nunca é apagada por aqui.
 function itensBestiaryLadderPersistiveis(itens) {
-  const huntsVistos = new Set();
   return (Array.isArray(itens) ? itens : [])
     .map((it) => {
       const hunt = typeof it.hunt === "string" ? it.hunt.trim() : "";
-      if (!hunt || huntsVistos.has(hunt)) return null; // sem hunt válido, ou caçada já tem entrada
+      if (!hunt) return null; // sem hunt válido — nem manda, não é dedup
       const criatura = typeof it.criatura === "string" && it.criatura.trim() ? it.criatura.trim() : hunt;
-      huntsVistos.add(hunt);
       return { hunt, criatura, faseAlvo: Number(it.faseAlvo) || 1, concluido: !!it.concluido };
     })
     .filter(Boolean);
@@ -1135,14 +1140,19 @@ function trocarCriaturaReferencia(hunt, criatura) {
 // usuário escolhe o nível livremente, pra cima ou pra baixo, mínimo 1. Sem
 // máximo — não existe um teto confirmado no protocolo (fases 1/2/3 só foram
 // vistas por print ao vivo de UMA criatura; outras podem ter mais).
-function ajustarFaseAlvo(hunt, delta) {
-  if (!selectedAutomationTabId || !hunt) return;
+// TASK-003-R2.1 — por ÍNDICE, não por `hunt`: com a dedup automática
+// revertida, duas entradas podem legitimamente compartilhar a mesma `hunt`
+// (configuração legada). Buscar "a" entrada por `hunt` (like antes, via
+// `entradaDaCacada`) sempre acharia a PRIMEIRA ocorrência — clicar no
+// stepper da SEGUNDA linha mexeria silenciosamente na primeira, na linha
+// errada. Índice é exatamente o que checkbox/mover/remover já usavam.
+function ajustarFaseAlvo(index, delta) {
+  if (!selectedAutomationTabId || !Number.isInteger(index) || index < 0) return;
   const atual = automationState.get(selectedAutomationTabId) || {};
   const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
-  const existente = entradaDaCacada(itensAtuais, hunt);
-  if (!existente) return;
-  const novaFase = Math.max(1, (Number(existente.faseAlvo) || 1) + delta);
-  const novo = itensAtuais.map((it) => (it === existente ? { ...it, faseAlvo: novaFase } : it));
+  if (!itensAtuais[index]) return;
+  const novaFase = Math.max(1, (Number(itensAtuais[index].faseAlvo) || 1) + delta);
+  const novo = itensAtuais.map((it, i) => (i === index ? { ...it, faseAlvo: novaFase } : it));
   enviarBestiaryLadder(novo);
 }
 
@@ -1276,6 +1286,17 @@ function renderBestiaryLadder(state) {
     return;
   }
 
+  // TASK-003-R2.1 — a dedup automática por `hunt` foi revertida (apagava
+  // configuração legada válida em qualquer ação trivial). Duas entradas
+  // com a mesma `hunt` agora podem legitimamente coexistir; isto só
+  // AVISA visualmente, nunca junta/remove nada sozinho — consolidar é
+  // decisão futura e explícita do usuário, fora do escopo desta correção.
+  const contagemPorHunt = new Map();
+  for (const it of itens) {
+    const chave = it && it.hunt;
+    if (chave) contagemPorHunt.set(chave, (contagemPorHunt.get(chave) || 0) + 1);
+  }
+
   const linhas = itens.map((it, i) => {
     const faseAlvo = Number(it.faseAlvo) || 1;
     const faseAtual = Number(it.faseAtual) || 0;
@@ -1283,6 +1304,7 @@ function renderBestiaryLadder(state) {
     const done = !!it.concluido;
     const ativo = !done && i === indiceAtual;
     const huntLabel = it.hunt || it.criatura || "?";
+    const eDuplicataLegada = it.hunt && contagemPorHunt.get(it.hunt) > 1;
     // TASK-003-R2 — composição informativa: a criatura de referência (a que
     // decide progresso/conclusão) sempre aparece; se a caçada tem outras
     // criaturas mapeadas além dela, isso vira só um número extra ao lado —
@@ -1298,6 +1320,7 @@ function renderBestiaryLadder(state) {
         <span>${i + 1}. ${escapeHtml(huntLabel)}${ativo ? " — caçando agora" : ""}</span>
         <b>Fase ${faseAtual} → alvo ${faseAlvo}</b>
       </div>
+      ${eDuplicataLegada ? '<div class="bestiaryLadderRowLegado">config. legada — duplicata desta caçada, não consolidada automaticamente</div>' : ""}
       ${criaturaSubLine}
       <div class="expBar"><div class="expFill" style="width:${pct}%"></div></div>
       <div class="bestiaryLadderRowMeta">
@@ -1332,14 +1355,12 @@ function renderBestiaryLadder(state) {
   });
   bestiaryLadderListaEl.querySelectorAll("button[data-ladder-fase-up]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const i = Number(btn.getAttribute("data-ladder-fase-up"));
-      ajustarFaseAlvo(itens[i] && itens[i].hunt, 1);
+      ajustarFaseAlvo(Number(btn.getAttribute("data-ladder-fase-up")), 1);
     });
   });
   bestiaryLadderListaEl.querySelectorAll("button[data-ladder-fase-down]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const i = Number(btn.getAttribute("data-ladder-fase-down"));
-      ajustarFaseAlvo(itens[i] && itens[i].hunt, -1);
+      ajustarFaseAlvo(Number(btn.getAttribute("data-ladder-fase-down")), -1);
     });
   });
   bestiaryLadderListaEl.querySelectorAll("button[data-ladder-up]").forEach((btn) => {

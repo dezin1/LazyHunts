@@ -253,28 +253,42 @@ assert(giantEntry2 && giantEntry2.criatura === "Cyclops", "referência de Giant 
 assert(giantEntry2.faseAlvo === 1 && giantEntry2.concluido === false, "trocar referência não mexeu em faseAlvo/concluido");
 
 // Cenário 3 — nível selecionado é persistido (stepper em "Minha escada").
+// TASK-003-R2.1 — `ajustarFaseAlvo` passou a ser por ÍNDICE (não por
+// `hunt`): "Rat Cellars" está no índice 0 desta lista (`itens[0]`).
 sandbox.automationState.set("conta-1", estadoComLadder(itens));
 enviosBestiaryLadder.length = 0;
-run('ajustarFaseAlvo("Rat Cellars", 1);');
+assert(itens[0].hunt === "Rat Cellars", "pré-condição do cenário: Rat Cellars está no índice 0");
+run("ajustarFaseAlvo(0, 1);");
 itens = itensDoUltimoEnvio();
 const ratAposStepper = itens.find((it) => it.hunt === "Rat Cellars");
 assert(ratAposStepper && ratAposStepper.faseAlvo === 2, `stepper +1 leva faseAlvo de Rat Cellars a 2 — recebido: ${ratAposStepper && ratAposStepper.faseAlvo}`);
-run(`ajustarFaseAlvo("Rat Cellars", -5);`); // nunca abaixo de 1 — sem teto/piso inventado além do mínimo óbvio
+run("ajustarFaseAlvo(0, -5);"); // nunca abaixo de 1 — sem teto/piso inventado além do mínimo óbvio
 itens = itensDoUltimoEnvio();
 const ratAposDescer = itens.find((it) => it.hunt === "Rat Cellars");
 assert(ratAposDescer.faseAlvo === 1, "stepper nunca deixa faseAlvo menor que 1");
 
-// Cenário 4 — itens legados continuam carregando sem serem descartados +
-// dedup mantém a PRIMEIRA ocorrência quando há duplicata por hunt.
+// Cenário 4 — itens legados continuam carregando sem serem descartados.
+// TASK-003-R2.1 — REVERTIDO: chegou a existir dedup automática por `hunt`
+// aqui (mantendo só a 1ª ocorrência). Isso apagava configuração legada
+// válida (duas entradas da mesma hunt com criaturas de referência
+// diferentes) na primeira ação trivial qualquer. Agora NENHUMA duplicata é
+// removida por esta função — só itens estruturalmente inválidos (sem
+// `hunt`) são filtrados.
 const legado = run(`itensBestiaryLadderPersistiveis([
   { hunt: "Legado Sem Campo Novo", criatura: "Legado Sem Campo Novo", faseAlvo: 3, concluido: true },
-  { hunt: "Duplicada", criatura: "Primeira", faseAlvo: 2, concluido: false },
-  { hunt: "Duplicada", criatura: "Segunda", faseAlvo: 9, concluido: true },
+  { hunt: "Duplicada Legada", criatura: "Primeira", faseAlvo: 2, concluido: false },
+  { hunt: "Duplicada Legada", criatura: "Segunda", faseAlvo: 9, concluido: true },
+  { hunt: "", criatura: "Sem Hunt", faseAlvo: 1, concluido: false },
 ])`);
-assert(legado.length === 2, `dedup mantém 1 entrada por hunt (Legado + Duplicada) — recebido: ${legado.length}`);
+assert(legado.length === 3, `hunt vazia é filtrada, mas a duplicata legada NÃO é removida — recebido: ${legado.length}`);
 assert(legado[0].hunt === "Legado Sem Campo Novo" && legado[0].faseAlvo === 3 && legado[0].concluido === true, "item legado é preservado com seus valores originais");
-const duplicadaMantida = legado.find((it) => it.hunt === "Duplicada");
-assert(duplicadaMantida.criatura === "Primeira", "quando há duplicata por hunt, a PRIMEIRA ocorrência é a mantida");
+const duplicadasLegadas = legado.filter((it) => it.hunt === "Duplicada Legada");
+assert(duplicadasLegadas.length === 2, "as DUAS entradas legadas da mesma hunt sobrevivem — nenhuma é descartada silenciosamente");
+assert(
+  duplicadasLegadas.some((it) => it.criatura === "Primeira" && it.faseAlvo === 2) &&
+    duplicadasLegadas.some((it) => it.criatura === "Segunda" && it.faseAlvo === 9),
+  "cada duplicata legada mantém sua própria criatura de referência e faseAlvo, intactos"
+);
 
 // Cenário 5 — nenhuma criatura/hunt inexistente é inventada.
 enviosBestiaryLadder.length = 0;
@@ -338,6 +352,63 @@ assert(
   !("faseAtual" in payloadPausar.itens[0]) && !("abatesAtuais" in payloadPausar.itens[0]),
   "o payload enviado ao pausar/iniciar nunca inclui faseAtual/abatesAtuais (só o backend escreve isso)"
 );
+
+// ============================================================
+// PARTE 3 — TASK-003-R2.1: duplicata legada nunca é apagada por uma ação
+// trivial (iniciar, pausar, ajustar nível de UMA das duas).
+// ============================================================
+
+const duasEntradasLegadas = [
+  { hunt: "Rat Cellars", criatura: "Rat", faseAlvo: 2, concluido: false },
+  { hunt: "Rat Cellars", criatura: "Rat Rei", faseAlvo: 5, concluido: false }, // duplicata legada — criatura de referência diferente
+];
+
+function assertAmbasPresentes(itensRecebidos, contexto) {
+  const doHunt = itensRecebidos.filter((it) => it.hunt === "Rat Cellars");
+  assert(doHunt.length === 2, `${contexto}: as 2 entradas legadas de "Rat Cellars" continuam presentes — recebido: ${doHunt.length}`);
+  assert(doHunt.some((it) => it.criatura === "Rat" && it.faseAlvo === 2), `${contexto}: a entrada de referência "Rat" (faseAlvo 2) não foi alterada nem removida`);
+  assert(doHunt.some((it) => it.criatura === "Rat Rei" && it.faseAlvo === 5), `${contexto}: a entrada de referência "Rat Rei" (faseAlvo 5) não foi alterada nem removida`);
+}
+
+// Cenário 10 — Iniciar preserva as duas.
+enviosBestiaryLadder.length = 0;
+run(`renderBestiaryControl({ bestiaryLadder: { enabled: false, index: 0, itens: ${JSON.stringify(duasEntradasLegadas)} } });`);
+sandbox.document.getElementById("bestiaryStartBtn").disparar("click");
+assertAmbasPresentes(itensDoUltimoEnvio(), "Iniciar Bestiário");
+assert(ultimoEnvio().msg.payload.bestiaryLadder.enabled === true, "Iniciar ainda manda enabled:true corretamente mesmo com duplicata legada presente");
+
+// Cenário 11 — Pausar preserva as duas.
+enviosBestiaryLadder.length = 0;
+run(`renderBestiaryControl({ bestiaryLadder: { enabled: true, index: 0, indiceAtual: 0, itens: ${JSON.stringify(duasEntradasLegadas)} } });`);
+sandbox.document.getElementById("bestiaryPauseBtn").disparar("click");
+assertAmbasPresentes(itensDoUltimoEnvio(), "Pausar Bestiário");
+assert(ultimoEnvio().msg.payload.bestiaryLadder.enabled === false, "Pausar ainda manda enabled:false corretamente mesmo com duplicata legada presente");
+
+// Cenário 12 — ajustar o nível de UMA (pelo índice da linha clicada, nunca
+// pela hunt) não remove nem mexe na outra.
+sandbox.automationState.set("conta-1", { bestiaryLadder: { enabled: false, index: 0, itens: duasEntradasLegadas } });
+enviosBestiaryLadder.length = 0;
+run("ajustarFaseAlvo(1, 1);"); // índice 1 = a entrada "Rat Rei" (faseAlvo 5 -> 6)
+let itensPosStepper = itensDoUltimoEnvio();
+assert(itensPosStepper.length === 2, "ajustar o nível do índice 1 não faz a outra entrada sumir — continuam 2");
+const ratReiDepois = itensPosStepper.find((it) => it.criatura === "Rat Rei");
+const ratNormalDepois = itensPosStepper.find((it) => it.criatura === "Rat");
+assert(ratReiDepois && ratReiDepois.faseAlvo === 6, `o stepper no índice 1 mexeu na entrada certa (Rat Rei: 5→6) — recebido: ${ratReiDepois && ratReiDepois.faseAlvo}`);
+assert(ratNormalDepois && ratNormalDepois.faseAlvo === 2, "a OUTRA entrada (Rat, índice 0) não foi tocada pelo stepper do índice 1");
+
+// Cenário 13 — nenhuma entrada legada desaparece do payload salvo, mesmo
+// depois de várias operações em sequência (checkbox, mover, iniciar).
+sandbox.automationState.set("conta-1", { bestiaryLadder: { enabled: false, index: 0, itens: duasEntradasLegadas } });
+enviosBestiaryLadder.length = 0;
+run('renderBestiaryLadder({ bestiaryLadder: { enabled: false, index: 0, indiceAtual: 0, itens: ' + JSON.stringify(duasEntradasLegadas) + ' } });');
+const checkboxRatRei = elementosFalsos.bestiaryLadderLista._elementos.find((el) => el.tagName === "INPUT" && el.getAttribute("data-ladder-done") === "1");
+assert(!!checkboxRatRei, "checkbox 'concluída' da 2ª linha (índice 1) existe");
+checkboxRatRei.checked = true; // simula o clique real marcando a caixa antes do evento "change"
+checkboxRatRei.disparar("change");
+const itensPosCheckbox = itensDoUltimoEnvio();
+assert(itensPosCheckbox.length === 2, "marcar 'concluída' na 2ª linha não descarta a 1ª");
+assert(itensPosCheckbox.find((it) => it.criatura === "Rat Rei").concluido === true, "a 2ª linha foi marcada concluída");
+assert(itensPosCheckbox.find((it) => it.criatura === "Rat").concluido === false, "a 1ª linha continua não concluída, intocada");
 
 // ============================================================
 if (falhas > 0) {

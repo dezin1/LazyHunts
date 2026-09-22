@@ -1506,6 +1506,15 @@ body {
   color: var(--text-muted);
   margin-top: -2px;
 }
+/* TASK-003-R2.1 — aviso, não ação: existe pra deixar visível que duas
+   entradas compartilham a mesma caçada (config. legada, nunca consolidada
+   sozinha), sem cor de erro/perigo — não é um problema a corrigir agora. */
+.bestiaryLadderRowLegado {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: 2px;
+}
 /* Linha 1 (metadados): abates + "concluída". Linha 2 (`...Actions`):
    stepper de nível + mover/remover. Duas linhas curtas, cada uma com só 2
    grupos — é o que evita a colisão/quebra confusa que existia quando tudo

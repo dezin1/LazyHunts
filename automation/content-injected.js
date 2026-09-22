@@ -7072,28 +7072,29 @@
     // (lista editada por completo, igual `rotateCharacters`) — nunca confia
     // cegamente no que vem do host: item sem `hunt` ou com `faseAlvo`
     // inválido é descartado em vez de gravado quebrado.
-    // TASK-003-R2 — modelo por CAÇADA: uma única entrada por `hunt` na
-    // escada (nunca uma posição de prioridade por criatura). O renderer já
-    // não deveria mandar duplicata, mas esta validação não confia nisso —
-    // dedup aqui também, mantendo a PRIMEIRA ocorrência de cada `hunt`
-    // (preserva a ordem de prioridade que o usuário montou) e descartando
-    // qualquer repetição. Isso também cobre configs legadas salvas antes
-    // desta mudança, que podiam ter duas entradas hunt+criatura diferentes
-    // pra mesma caçada — nada é perdido além da posição redundante em si
-    // (progresso nunca fica armazenado no item, é sempre relido de
-    // `economia.bestiarioFases`/`economia.bestiario` na hora).
+    // TASK-003-R2 — modelo por CAÇADA: a CRIAÇÃO nova (`adicionarCacadaNaEscada`
+    // no renderer) nunca duplica uma `hunt` já presente.
+    // TASK-003-R2.1 — REVERTIDO: esta validação chegou a deduplicar por
+    // `hunt` também aqui, mantendo só a primeira ocorrência. Isso é
+    // DESTRUTIVO pra configuração legada: como QUALQUER `setConfig` de
+    // Bestiary (iniciar, pausar, mexer no stepper de um item, marcar
+    // concluída) passa por aqui, uma duplicata legada válida (duas entradas
+    // da mesma hunt com criaturas de referência diferentes, de antes desta
+    // mudança de modelo) era apagada na PRÓXIMA ação trivial qualquer, sem o
+    // usuário sequer tocar nela. Esta validação agora só filtra itens
+    // estruturalmente inválidos (`hunt` vazio, `faseAlvo` não numérico ou <
+    // 1) — nunca remove uma entrada por ela compartilhar `hunt` com outra.
+    // Consolidar duplicatas, se um dia for feito, precisa ser uma ação
+    // explícita do usuário — não uma leitura silenciosa como esta.
     if (partial.bestiaryLadder && typeof partial.bestiaryLadder === "object") {
       const raw = partial.bestiaryLadder;
-      const huntsVistos = new Set();
       const itens = Array.isArray(raw.itens)
         ? raw.itens
             .map((it) => {
               if (!it || typeof it.hunt !== "string" || !it.hunt.trim()) return null;
               const hunt = it.hunt.trim();
-              if (huntsVistos.has(hunt)) return null; // já existe uma entrada pra essa caçada
               const faseAlvo = Number(it.faseAlvo);
               if (!Number.isFinite(faseAlvo) || faseAlvo < 1) return null;
-              huntsVistos.add(hunt);
               return {
                 hunt,
                 // `criatura` é a CRIATURA DE REFERÊNCIA da entrada — mesmo
