@@ -1097,7 +1097,17 @@ function renderBestiaryControl(state) {
     const startBtn = document.getElementById("bestiaryStartBtn");
     // Regra 2 — só liga `enabled`; `itens` é a MESMA referência recebida do
     // estado atual, sem tocar ordem/conteúdo.
-    if (startBtn) startBtn.addEventListener("click", () => enviarBestiaryLadder(itens, true));
+    if (startBtn) {
+      startBtn.addEventListener("click", () => {
+        // TASK-003-D1 — confirma que o clique disparou e o que foi enviado.
+        console.log("[BESTIARY-START]", "clique-iniciar", {
+          itens: itens.length,
+          hunt: itens[0] ? itens[0].hunt : null,
+          timestamp: new Date().toISOString(),
+        });
+        enviarBestiaryLadder(itens, true);
+      });
+    }
     return;
   }
 
@@ -1112,7 +1122,18 @@ function renderBestiaryControl(state) {
   const pauseBtn = document.getElementById("bestiaryPauseBtn");
   // Regra 3 — pausar só desliga `enabled`; a escada inteira (ordem, níveis,
   // concluídas) segue intacta pra retomar de onde parou.
-  if (pauseBtn) pauseBtn.addEventListener("click", () => enviarBestiaryLadder(itens, false));
+  if (pauseBtn) {
+    pauseBtn.addEventListener("click", () => {
+      // TASK-003-D1
+      console.log("[BESTIARY-START]", "clique-pausar", {
+        itens: itens.length,
+        hunt: itemAtivo ? itemAtivo.hunt : null,
+        indiceAtual: Number.isFinite(indiceAtual) ? indiceAtual : null,
+        timestamp: new Date().toISOString(),
+      });
+      enviarBestiaryLadder(itens, false);
+    });
+  }
 }
 
 // TASK-003-R2 — uma caçada só tem UMA entrada na escada. `entradaDaCacada`

@@ -872,6 +872,55 @@
     return typeof tier === "string" && tier ? tier : null;
   }
 
+  // TASK-003-D1 — INSTRUMENTAÇÃO TEMPORÁRIA, orientada a evento. Loga só
+  // quando o `dados` de um `evento` muda desde a última vez (dedup por
+  // JSON.stringify) — é o que evita "log a cada tick sem mudança de
+  // estado" sem precisar de nenhum polling/interval novo: quem chama isto
+  // já está dentro de um tick que já ia rodar de qualquer jeito.
+  // Remover junto com todos os call sites quando o André confirmar a causa
+  // real com o console aberto.
+  const ultimoLogBestiaryStart = {};
+  function logBestiaryStart(evento, dados) {
+    const assinatura = JSON.stringify(dados);
+    if (ultimoLogBestiaryStart[evento] === assinatura) return;
+    ultimoLogBestiaryStart[evento] = assinatura;
+    console.log("[BESTIARY-START]", evento, { ...dados, timestamp: new Date().toISOString() });
+  }
+
+  // TASK-003-D1 — roda no TOPO de `monitorTick`, ANTES do gate
+  // running/isBusy/licensed, e só faz alguma coisa quando o Bestiary está
+  // de fato ligado (`bestiaryEnabled`) — pra não gerar log nenhum em quem
+  // não usa a feature. `loadState()` é cache em memória desde v0.12.1 (não
+  // é leitura de disco), então chamar mais uma vez aqui não reintroduz o
+  // custo que motivou aquele fix. NÃO decide nada — só observa e loga.
+  function diagnosticarBloqueioInicialDoBestiary(cfg) {
+    const bestiaryEnabled = !!(cfg.bestiaryLadder && cfg.bestiaryLadder.enabled);
+    if (!bestiaryEnabled) return;
+    const itens = Array.isArray(cfg.bestiaryLadder.itens) ? cfg.bestiaryLadder.itens : [];
+    const atual = bestiaryLadderItemAtual(cfg);
+    let motivo;
+    if (!running) motivo = "automacao-principal-desligada (running=false — botao 'Ligar automacao' da aba Cacada)";
+    else if (isBusy) motivo = "tick-ocupado (isBusy=true)";
+    else if (!licensed) motivo = "sem-licenca (licensed=false)";
+    else if (!itens.length) motivo = "escada-vazia";
+    else if (cfg.huntMode === "group") motivo = "modo-em-grupo (Bestiary so age no modo Solo)";
+    else if (cfg.expeditionEnabled) motivo = "expedicao-ligada (mutuamente exclusivo com Bestiary)";
+    else motivo = "sem-bloqueio-conhecido-aqui";
+    logBestiaryStart("bloqueio-inicial", {
+      running,
+      licensed,
+      isBusy,
+      bestiaryEnabled,
+      itens: itens.length,
+      indiceAtual: atual ? atual.index : null,
+      hunt: atual && atual.item ? atual.item.hunt : null,
+      huntMode: cfg.huntMode,
+      expeditionEnabled: !!cfg.expeditionEnabled,
+      stamina: motivo === "sem-bloqueio-conhecido-aqui" ? getStaminaRemainingMinutes() : null,
+      motivo,
+    });
+  }
+
   // Acha o próximo item NÃO concluído a partir de `apartirDe` (exclusive),
   // dando a volta na lista uma vez. `null` = todos concluídos.
   function bestiaryLadderProximoIndice(itens, apartirDe) {
@@ -4425,7 +4474,27 @@
         ? `Retomando a expedição: ${targetName} (objetivo "${alvo.objetivo.label}", ${alvo.objetivo.progress}/${alvo.objetivo.quota})...`
         : `Retomando caçada: ${targetName}...`
     );
-    await ensureHunting({ ...cfg, pullLevel: alvo.pullLevel }, targetName);
+    // TASK-003-D1 — só loga quando é o Ladder decidindo (evita ruído pra
+    // quem não usa Bestiary/expedição normal).
+    const bestiaryDrivendoResumo = !!nomeDoBestiaryLadder(cfg);
+    if (bestiaryDrivendoResumo) {
+      logBestiaryStart("ensureHunting-tentativa", {
+        running, licensed, isBusy, bestiaryEnabled: true, hunt: targetName,
+        huntMode: cfg.huntMode, expeditionEnabled: !!cfg.expeditionEnabled,
+        motivo: "runSellAndReturnCycle: retomada via alvoDeCacada apos leaveHunt",
+      });
+    }
+    try {
+      await ensureHunting({ ...cfg, pullLevel: alvo.pullLevel }, targetName);
+      if (bestiaryDrivendoResumo) {
+        logBestiaryStart("ensureHunting-resultado", { hunt: targetName, motivo: "sucesso" });
+      }
+    } catch (err) {
+      if (bestiaryDrivendoResumo) {
+        logBestiaryStart("ensureHunting-resultado", { hunt: targetName, motivo: `falha: ${(err && err.message) || err}` });
+      }
+      throw err;
+    }
 
     saveState({ cycles: (loadState().cycles || 0) + 1 });
     if (stats) stats.cycles++;
@@ -4566,6 +4635,10 @@
   }
 
   async function monitorTick() {
+    // TASK-003-D1 — só observa, não decide nada. `loadState()` é cache em
+    // memória (v0.12.1) — chamar de novo aqui não é o mesmo problema de
+    // I/O que aquele fix resolveu.
+    diagnosticarBloqueioInicialDoBestiary(loadState());
     if (!running || isBusy || !licensed) return;
 
     // v0.9.15 — comando `resumeGroupHunt` que chegou com a conta ocupada.
@@ -4830,7 +4903,26 @@
           const cfgParaRetomar = nomeLadderRetomar
             ? { ...cfg, pullLevel: tierDoBestiaryLadder(cfg) || cfg.pullLevel }
             : cfg;
-          await ensureHunting(cfgParaRetomar, nomeLadderRetomar);
+          // TASK-003-D1 — este é o caminho mais provável do "cliquei em
+          // Iniciar Bestiário e nada aconteceu": personagem parado, com
+          // stamina, e o tick decide retomar. Loga tentativa + resultado.
+          if (nomeLadderRetomar) {
+            logBestiaryStart("ensureHunting-tentativa", {
+              running, licensed, isBusy, bestiaryEnabled: true, hunt: nomeLadderRetomar,
+              huntMode: cfg.huntMode, expeditionEnabled: !!cfg.expeditionEnabled,
+              stamina: getStaminaRemainingMinutes(),
+              motivo: "retomada por stamina/idle (nomeDoBestiaryLadder)",
+            });
+          }
+          try {
+            await ensureHunting(cfgParaRetomar, nomeLadderRetomar);
+            if (nomeLadderRetomar) logBestiaryStart("ensureHunting-resultado", { hunt: nomeLadderRetomar, motivo: "sucesso" });
+          } catch (err) {
+            if (nomeLadderRetomar) {
+              logBestiaryStart("ensureHunting-resultado", { hunt: nomeLadderRetomar, motivo: `falha: ${(err && err.message) || err}` });
+            }
+            throw err;
+          }
         }
         if (estavaTreinando && isTraining()) {
           await cancelTraining();
@@ -4890,10 +4982,22 @@
             updatePanelStatus("Indo pra próxima do Auto Bestiary");
             await leaveHunt();
             zerarDeteccaoDeSpawn();
+            // TASK-003-D1
+            logBestiaryStart("ensureHunting-tentativa", {
+              running, licensed, isBusy, bestiaryEnabled: true, hunt: destino,
+              huntMode: cfg.huntMode, expeditionEnabled: !!cfg.expeditionEnabled,
+              motivo: "troca no meio da caçada (fase-alvo batida)",
+            });
             // TASK-003-R2.3 — mesmo override de tier dos outros dois pontos:
             // sem isso, a troca pra próxima caçada da escada ignorava o
             // nível salvo nela e usava `cfg.pullLevel` (global).
-            await ensureHunting({ ...cfg, pullLevel: tierDoBestiaryLadder(cfg) || cfg.pullLevel }, destino);
+            try {
+              await ensureHunting({ ...cfg, pullLevel: tierDoBestiaryLadder(cfg) || cfg.pullLevel }, destino);
+              logBestiaryStart("ensureHunting-resultado", { hunt: destino, motivo: "sucesso" });
+            } catch (err) {
+              logBestiaryStart("ensureHunting-resultado", { hunt: destino, motivo: `falha: ${(err && err.message) || err}` });
+              throw err;
+            }
             updatePanelStatus("Caçando (Auto Bestiary)");
             log(`Auto Bestiary: caçando "${destino}" agora.`);
             consecutiveErrors = 0;
@@ -7181,6 +7285,25 @@
         index: raw.index !== undefined ? Math.max(0, Math.round(Number(raw.index)) || 0) : indexAtual || 0,
         itens,
       };
+      // TASK-003-D1 — confirma que o `setConfig` do clique "Iniciar/Pausar"
+      // (ou qualquer outra ação da escada) chegou até aqui e o que foi
+      // efetivamente persistido — antes do próximo `sendState()`. `applyConfig`
+      // só recebe um DELTA (`partial`/`next`), não o estado inteiro — por
+      // isso `estadoAtualParaLog` busca huntMode/expeditionEnabled (que
+      // este `setConfig` normalmente não inclui) pra completar o retrato.
+      const estadoAtualParaLog = loadState();
+      logBestiaryStart("applyConfig-recebido", {
+        running,
+        licensed,
+        isBusy,
+        bestiaryEnabled: next.bestiaryLadder.enabled,
+        itens: next.bestiaryLadder.itens.length,
+        indiceAtual: next.bestiaryLadder.index,
+        hunt: next.bestiaryLadder.itens[0] ? next.bestiaryLadder.itens[0].hunt : null,
+        huntMode: next.huntMode !== undefined ? next.huntMode : estadoAtualParaLog.huntMode,
+        expeditionEnabled: next.expeditionEnabled !== undefined ? next.expeditionEnabled : estadoAtualParaLog.expeditionEnabled,
+        motivo: "setConfig com bestiaryLadder recebido e validado",
+      });
     }
     saveState(next);
     sendState();
