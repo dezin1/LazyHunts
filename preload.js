@@ -64,6 +64,11 @@ contextBridge.exposeInMainWorld("hunteraFarm", {
   // v0.12.2 — pede ao Chromium o purge de memória que o anti-desconexão
   // (v0.4.4) impede de acontecer sozinho.
   purgeMemory: (webContentsIds) => ipcRenderer.invoke("perf:purge", webContentsIds),
+  // v0.12.5 — limpa cache HTTP + service workers/Cache Storage da PARTIÇÃO
+  // de uma conta (preserva login: nunca toca cookies/localStorage/
+  // IndexedDB), pra quando um reload comum não resolve o jogo travado
+  // carregando com um bundle velho.
+  hardReloadAccount: (partition) => ipcRenderer.invoke("webview:hardReload", partition),
   // v0.12.3 — janela minimizada/restaurada. Com a janela escondida nem a conta
   // selecionada está sendo vista, e aí o freio de render vale pra todas.
   onAppVisibilityChanged: (callback) => {

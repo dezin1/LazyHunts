@@ -18,7 +18,7 @@
 // Electron.
 
 // v0.12.2 — `webContents` entrou pra medição de CPU/RAM por conta (`perf:*`).
-const { app, BrowserWindow, ipcMain, dialog, Menu, safeStorage, shell, webContents } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, Menu, safeStorage, shell, webContents, session } = require("electron");
 const path = require("path");
 const fs = require("fs/promises");
 const { pathToFileURL } = require("url");
@@ -1111,6 +1111,34 @@ ipcMain.handle("perf:purge", async (_event, wcIds) => {
     }
   }
   return resultado;
+});
+
+// ---------- recarregar sem cache (v0.12.5) ----------
+//
+// André relatou o jogo travando em "Carregando o jogo…" e confirmou que um
+// reload comum (o botão "Recarregar esta conta"/"Recarregar todas", que só
+// chama `webview.reload()`) NÃO resolve — só um hard reload de verdade
+// resolvia. Diferença: `reload()` comum ainda pode servir um bundle JS velho
+// de dentro do cache HTTP (ou de um Service Worker, se o jogo registrar um
+// pra funcionar como PWA) mesmo depois de o backend já ter mudado.
+//
+// Este handler limpa só o que pode estar guardando esse bundle velho —
+// cache HTTP, service workers e Cache Storage da PARTIÇÃO daquela conta —
+// e de propósito NÃO toca em cookies/localStorage/IndexedDB, pra não
+// derrubar o login já feito. Quem chama ainda precisa recarregar o webview
+// depois (ver `navHardReloadBtn` no renderer).
+ipcMain.handle("webview:hardReload", async (_event, partition) => {
+  if (typeof partition !== "string" || !partition.startsWith("persist:")) {
+    return { ok: false, motivo: "partição inválida" };
+  }
+  try {
+    const ses = session.fromPartition(partition);
+    await ses.clearCache();
+    await ses.clearStorageData({ storages: ["serviceworkers", "cachestorage"] });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, motivo: (err && err.message) || String(err) };
+  }
 });
 
 // ---------- atualização automática (v0.6.0) ----------

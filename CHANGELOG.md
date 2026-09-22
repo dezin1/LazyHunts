@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.5 — 2026-09-22
+
+### Correção: jogo travava em "Carregando o jogo…" sem um jeito de resolver
+
+André relatou o jogo travando na tela de loading em uma das contas. O botão "Recarregar esta conta"/"Recarregar todas" que já existia (`webview.reload()`) não resolvia — porque um reload comum ainda pode servir o mesmo bundle JS velho guardado no cache HTTP (ou por um Service Worker, se o jogo registrar um pra funcionar como PWA), mesmo depois de o backend já ter mudado.
+
+Novo botão **"Recarregar sem cache"**, ao lado do reload comum (ícone de lupa na trilha lateral → popover de zoom): limpa o cache HTTP e os service workers/Cache Storage só da PARTIÇÃO daquela conta, e só então recarrega. De propósito **não** toca em cookies/localStorage/IndexedDB — não desloga a conta.
+
 ## 0.12.4 — 2026-09-17
 
 ### Correção: o painel de desempenho ficava "Medindo…" para sempre

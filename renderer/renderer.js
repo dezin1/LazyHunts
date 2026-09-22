@@ -185,6 +185,7 @@ const telegramTestBtn = document.getElementById("telegramTestBtn");
 const telegramTestResultEl = document.getElementById("telegramTestResult");
 
 const navReloadBtn = document.getElementById("navReloadBtn");
+const navHardReloadBtn = document.getElementById("navHardReloadBtn");
 const railZoomBtn = document.getElementById("railZoomBtn");
 const zoomPopover = document.getElementById("zoomPopover");
 const zoomOutBtn = document.getElementById("zoomOutBtn");
@@ -2840,6 +2841,27 @@ function updateToolbarState() {
 navReloadBtn.addEventListener("click", () => {
   const wv = getWebview(activeTabId);
   if (wv) wv.reload();
+});
+
+// v0.12.5 — "recarregar sem cache": André confirmou que o reload comum
+// (acima) não tirava o jogo de "Carregando o jogo…" preso num bundle velho.
+// Limpa cache HTTP + service workers/Cache Storage da PARTIÇÃO da conta (via
+// main.js — só o processo principal tem acesso à `session`), preserva
+// cookies/localStorage (não desloga), e só então recarrega ignorando
+// qualquer cache que ainda reste na própria navegação.
+navHardReloadBtn.addEventListener("click", async () => {
+  const wv = getWebview(activeTabId);
+  if (!wv || !activeTabId) return;
+  navHardReloadBtn.disabled = true;
+  try {
+    const resultado = await window.hunteraFarm.hardReloadAccount(partitionFor(activeTabId));
+    if (!resultado || !resultado.ok) {
+      console.error("Recarregar sem cache falhou:", (resultado && resultado.motivo) || "motivo desconhecido");
+    }
+  } finally {
+    navHardReloadBtn.disabled = false;
+  }
+  wv.reloadIgnoringCache();
 });
 
 // v0.9.22 — popover do zoom na trilha. Fecha ao clicar fora ou no Esc, como
