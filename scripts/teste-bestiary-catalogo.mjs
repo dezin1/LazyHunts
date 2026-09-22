@@ -119,11 +119,38 @@ function fakeContainer() {
 }
 
 function fakeInput(initial = "") {
-  return { value: initial, addEventListener() {} };
+  return { value: initial, addEventListener() {}, focus() {} };
+}
+// TASK-003-R2.2 — botão/overlay simples com handlers por tipo de evento,
+// pra testar abrir/fechar do modal sem precisar de um DOM real.
+function fakeBotaoOuOverlay(propsIniciais = {}) {
+  const handlers = {};
+  return {
+    ...propsIniciais,
+    addEventListener(tipo, cb) {
+      (handlers[tipo] = handlers[tipo] || []).push(cb);
+    },
+    disparar(tipo, evt) {
+      if (this.disabled) return;
+      (handlers[tipo] || []).forEach((h) => h(evt || {}));
+    },
+  };
+}
+function fakeTexto() {
+  return {
+    _text: "",
+    set textContent(v) {
+      this._text = v;
+    },
+    get textContent() {
+      return this._text;
+    },
+  };
 }
 
 const enviosBestiaryLadder = []; // toda chamada real a sendAutomationCommand com setConfig.bestiaryLadder
 const outrosComandos = [];
+const documentHandlers = {}; // document.addEventListener("keydown", ...) — pro Esc fechar o modal
 
 // TASK-003-R2 — as consts do bloco real (`const x = document.getElementById(...)`)
 // criam bindings `const` no escopo léxico do contexto `vm`, que SOMBREIAM
@@ -131,9 +158,17 @@ const outrosComandos = [];
 // elementos falsos vêm de dentro de `getElementById`, nunca como
 // propriedade pré-setada no sandbox (bug já corrigido numa rodada anterior
 // deste mesmo teste).
+const bestiaryModalCardFake = fakeBotaoOuOverlay();
 const elementosFalsos = {
   bestiaryControl: fakeContainer(),
   bestiaryLadderLista: fakeContainer(),
+  bestiaryLadderResumo: fakeTexto(),
+  bestiaryAddHuntsBtn: fakeBotaoOuOverlay(),
+  bestiaryHuntModal: fakeBotaoOuOverlay({
+    hidden: true,
+    querySelector: (sel) => (sel === ".bestiaryModalCard" ? bestiaryModalCardFake : null),
+  }),
+  bestiaryModalFecharBtn: fakeBotaoOuOverlay(),
   bestiaryCatalogoSearch: fakeInput(""),
   bestiaryCatalogoLista: fakeContainer(),
 };
@@ -149,6 +184,9 @@ const sandbox = {
         if (achado) return achado;
       }
       return null;
+    },
+    addEventListener: (tipo, cb) => {
+      (documentHandlers[tipo] = documentHandlers[tipo] || []).push(cb);
     },
   },
   automationState: new Map(),
@@ -171,6 +209,9 @@ vm.runInContext(blocoBestiario, context, { filename: "renderer-bestiary-block.js
 
 function run(code) {
   return vm.runInContext(code, context, { filename: "teste-bestiary-inline.js" });
+}
+function dispararDocumento(tipo, evt) {
+  (documentHandlers[tipo] || []).forEach((h) => h(evt || {}));
 }
 
 function ultimoEnvio() {
@@ -195,6 +236,23 @@ function estadoComLadder(itens) {
 }
 
 sandbox.automationState.set("conta-1", estadoComLadder([]));
+
+// Cenário 0 — TASK-003-R2.2: com o modal FECHADO (estado inicial real do
+// app), o catálogo pesado nunca é montado no DOM, mesmo chamando a função
+// de render diretamente com dados de sobra. "Minha escada" continua
+// funcionando (renderBestiaryLadder não depende do modal pra nada).
+assert(elementosFalsos.bestiaryHuntModal.hidden === true, "modal começa fechado (hidden=true), como no boot real do app");
+run('renderBestiaryCatalogo(automationState.get("conta-1"));');
+assert(elementosFalsos.bestiaryCatalogoLista.innerHTML === "", "com o modal fechado, chamar renderBestiaryCatalogo não põe NADA no DOM do catálogo");
+run('renderBestiaryLadder(automationState.get("conta-1"));');
+assert(elementosFalsos.bestiaryLadderLista.innerHTML.includes("Nenhuma caçada na escada"), "\"Minha escada\" renderiza normalmente mesmo com o modal do catálogo fechado");
+
+// A partir daqui, Parte 1 testa o CONTEÚDO do catálogo — abre o modal uma
+// vez (mesma função que o botão "+ Adicionar caçadas" chama) e deixa
+// aberto pro resto desta parte; o ciclo completo abrir→fechar→reabrir tem
+// sua própria seção (Parte 4, mais abaixo).
+run("abrirBestiaryModal();");
+assert(elementosFalsos.bestiaryHuntModal.hidden === false, "abrirBestiaryModal() desoculta o modal");
 
 // Cenário 1 — adicionar "Rat Cellars" cria uma única entrada por hunt.
 enviosBestiaryLadder.length = 0;
@@ -409,6 +467,61 @@ const itensPosCheckbox = itensDoUltimoEnvio();
 assert(itensPosCheckbox.length === 2, "marcar 'concluída' na 2ª linha não descarta a 1ª");
 assert(itensPosCheckbox.find((it) => it.criatura === "Rat Rei").concluido === true, "a 2ª linha foi marcada concluída");
 assert(itensPosCheckbox.find((it) => it.criatura === "Rat").concluido === false, "a 1ª linha continua não concluída, intocada");
+
+// ============================================================
+// PARTE 4 — TASK-003-R2.2: modal "Adicionar caçadas" (abrir/fechar/reabrir)
+// ============================================================
+
+const estadoModalTeste = estadoComLadder([{ hunt: "Rat Cellars", criatura: "Rat", faseAlvo: 1, concluido: false }]);
+sandbox.automationState.set("conta-1", estadoModalTeste);
+
+// Cenário 14 — fechar desmonta o catálogo pesado (nunca fica invisível no
+// DOM) e NÃO mexe na escada/configuração.
+run("fecharBestiaryModal();");
+assert(elementosFalsos.bestiaryHuntModal.hidden === true, "fecharBestiaryModal() oculta o modal");
+assert(elementosFalsos.bestiaryCatalogoLista.innerHTML === "", "fechar limpa o innerHTML do catálogo — nenhum card fica escondido no DOM");
+const ladderIntacta = sandbox.automationState.get("conta-1").bestiaryLadder.itens;
+assert(ladderIntacta.length === 1 && ladderIntacta[0].hunt === "Rat Cellars", "fechar o modal não altera a escada/configuração de forma alguma");
+
+// Cenário 15 — enquanto fechado, chamadas de render (via sendState/tick
+// normal do app) continuam sem popular o catálogo.
+run('renderBestiaryLadder(automationState.get("conta-1"));'); // isto chama renderBestiaryCatalogo por dentro
+assert(elementosFalsos.bestiaryCatalogoLista.innerHTML === "", "um tick normal de renderBestiaryLadder não repopula o catálogo com o modal fechado");
+assert(elementosFalsos.bestiaryLadderLista.innerHTML.includes("Rat Cellars"), "\"Minha escada\" continua visível e funcional com o modal fechado");
+
+// Cenário 16 — reabrir renderiza o catálogo de novo (sob demanda), busca
+// filtra, adicionar funciona, e a MESMA hunt já presente não duplica.
+run("abrirBestiaryModal();");
+assert(elementosFalsos.bestiaryHuntModal.hidden === false, "reabrir desoculta o modal de novo");
+assert(elementosFalsos.bestiaryCatalogoLista.innerHTML.length > 0, "reabrir renderiza o catálogo de novo (sob demanda, não ficou pré-montado)");
+const botaoRatJaNaEscadaAoReabrir = elementosFalsos.bestiaryCatalogoLista._elementos.find(
+  (el) => el.tagName === "BUTTON" && el.getAttribute("data-add-hunt") === "Rat Cellars"
+);
+assert(!botaoRatJaNaEscadaAoReabrir, "Rat Cellars (já configurada antes de fechar) continua sem botão 'Adicionar' ao reabrir — não duplica");
+
+elementosFalsos.bestiaryCatalogoSearch.value = "Goblin"; // busca por algo que não existe no catálogo desta rodada
+run("bestiaryCatalogoAssinaturaAnterior = null; renderBestiaryCatalogo(automationState.get('conta-1'));");
+assert(
+  elementosFalsos.bestiaryCatalogoLista.innerHTML.includes("Nenhuma caçada encontrada"),
+  "a busca dentro do modal filtra de verdade (sem resultado pra 'Goblin' neste catálogo)"
+);
+elementosFalsos.bestiaryCatalogoSearch.value = "";
+
+// Cenário 17 — fechar de novo por clique no overlay (fora do card) e pelo
+// botão "✕" — os dois caminhos funcionam.
+run("bestiaryCatalogoAssinaturaAnterior = null; renderBestiaryCatalogo(automationState.get('conta-1'));");
+assert(elementosFalsos.bestiaryCatalogoLista.innerHTML.length > 0, "pré-condição: catálogo está populado antes de testar os fechamentos");
+elementosFalsos.bestiaryHuntModal.disparar("click", { target: elementosFalsos.bestiaryHuntModal });
+assert(elementosFalsos.bestiaryHuntModal.hidden === true, "clicar no overlay (fora do card) fecha o modal");
+assert(elementosFalsos.bestiaryCatalogoLista.innerHTML === "", "fechar pelo overlay também desmonta o catálogo");
+
+run("abrirBestiaryModal();");
+elementosFalsos.bestiaryModalFecharBtn.disparar("click");
+assert(elementosFalsos.bestiaryHuntModal.hidden === true, "clicar no botão '✕' fecha o modal");
+
+run("abrirBestiaryModal();");
+dispararDocumento("keydown", { key: "Escape" });
+assert(elementosFalsos.bestiaryHuntModal.hidden === true, "a tecla Esc também fecha o modal");
 
 // ============================================================
 if (falhas > 0) {

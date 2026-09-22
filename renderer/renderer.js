@@ -84,6 +84,12 @@ const expedicaoListaEl = document.getElementById("expedicaoLista");
 // da apresentação; `bestiaryControlEl` é onde o botão Iniciar/Pausar entra.
 const bestiaryControlEl = document.getElementById("bestiaryControl");
 const bestiaryLadderListaEl = document.getElementById("bestiaryLadderLista");
+const bestiaryLadderResumoEl = document.getElementById("bestiaryLadderResumo");
+// TASK-003-R2.2 — catálogo completo virou modal: fica fora da aba (ver
+// index.html, perto de #botFloat), só é preenchido enquanto aberto.
+const bestiaryAddHuntsBtn = document.getElementById("bestiaryAddHuntsBtn");
+const bestiaryHuntModalEl = document.getElementById("bestiaryHuntModal");
+const bestiaryModalFecharBtn = document.getElementById("bestiaryModalFecharBtn");
 const bestiaryCatalogoSearchInput = document.getElementById("bestiaryCatalogoSearch");
 const bestiaryCatalogoListaEl = document.getElementById("bestiaryCatalogoLista");
 // v0.11.10 — detector de spawn seco (config GLOBAL, não por conta).
@@ -1156,6 +1162,55 @@ function ajustarFaseAlvo(index, delta) {
   enviarBestiaryLadder(novo);
 }
 
+// TASK-003-R2.2 — o catálogo completo (podem ser dezenas de caçadas) virou
+// modal: só existe DOM pesado (`#bestiaryCatalogoLista` preenchido) enquanto
+// `bestiaryModalAberto` é true. Fechado, a lista fica vazia e
+// `renderBestiaryCatalogo` nem entra no corpo da função (ver guard logo no
+// início dela) — nenhum redesenho, nenhum card escondido no DOM.
+let bestiaryModalAberto = false;
+
+function abrirBestiaryModal() {
+  if (!bestiaryHuntModalEl || bestiaryModalAberto) return;
+  bestiaryModalAberto = true;
+  bestiaryHuntModalEl.hidden = false;
+  bestiaryCatalogoAssinaturaAnterior = null; // força desenhar do zero — nada ficou "meio pronto" enquanto fechado
+  const atual = selectedAutomationTabId ? automationState.get(selectedAutomationTabId) : null;
+  if (atual) renderBestiaryCatalogo(atual);
+  try {
+    bestiaryCatalogoSearchInput.focus();
+  } catch (err) {
+    // ambiente sem foco de verdade (ex.: teste isolado) — não é fatal
+  }
+}
+
+function fecharBestiaryModal() {
+  if (!bestiaryHuntModalEl || !bestiaryModalAberto) return;
+  bestiaryModalAberto = false;
+  bestiaryHuntModalEl.hidden = true;
+  // Desmonta o catálogo pesado de verdade — nunca fica renderizado (nem
+  // invisível) com o modal fechado. A busca digitada NÃO é apagada (só a
+  // lista de cards, recriada do zero na próxima abertura): fechar o modal
+  // não é "resetar a busca", é só devolver o DOM pesado.
+  bestiaryCatalogoListaEl.innerHTML = "";
+  bestiaryCatalogoAssinaturaAnterior = null;
+}
+
+if (bestiaryAddHuntsBtn) bestiaryAddHuntsBtn.addEventListener("click", abrirBestiaryModal);
+if (bestiaryModalFecharBtn) bestiaryModalFecharBtn.addEventListener("click", fecharBestiaryModal);
+if (bestiaryHuntModalEl) {
+  // Clique no overlay (fora do card) fecha — clique DENTRO do card não deve
+  // borbulhar até aqui, então o card precisa impedir a propagação do clique
+  // ("stopPropagation" é feito no próprio card via listener abaixo).
+  bestiaryHuntModalEl.addEventListener("click", (e) => {
+    if (e.target === bestiaryHuntModalEl) fecharBestiaryModal();
+  });
+  const card = bestiaryHuntModalEl.querySelector(".bestiaryModalCard");
+  if (card) card.addEventListener("click", (e) => e.stopPropagation());
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && bestiaryModalAberto) fecharBestiaryModal();
+});
+
 bestiaryCatalogoSearchInput.addEventListener("input", () => {
   // A busca é só filtro local — não manda nada pro backend nem espera
   // resposta. Força o catálogo a re-renderizar contra o último `state`
@@ -1177,6 +1232,11 @@ bestiaryCatalogoSearchInput.addEventListener("input", () => {
 let bestiaryCatalogoAssinaturaAnterior = null;
 
 function renderBestiaryCatalogo(state) {
+  // TASK-003-R2.2 — nunca desenha o catálogo pesado com o modal fechado.
+  // Isto é chamado a cada `sendState()` (via renderBestiaryLadder), então
+  // sem este guard o catálogo continuaria sendo redesenhado (e escondido
+  // via CSS) a cada tick mesmo fechado — exatamente o oposto do pedido.
+  if (!bestiaryModalAberto) return;
   const catalogo = state.bestiaryCatalogo;
 
   if (catalogo === null || catalogo === undefined) {
@@ -1273,16 +1333,28 @@ function renderBestiaryCatalogo(state) {
   });
 }
 
+// TASK-003-R2.2 — resumo opcional pedido na tarefa ("3 caçadas
+// configuradas"), fica ao lado do título "Minha escada" — a aba não mostra
+// mais o catálogo inteiro, só este número + a lista de quem já foi
+// adicionado.
+function renderBestiaryLadderResumo(itens) {
+  if (!bestiaryLadderResumoEl) return;
+  bestiaryLadderResumoEl.textContent = itens.length
+    ? `${itens.length} caçada${itens.length > 1 ? "s" : ""} configurada${itens.length > 1 ? "s" : ""}`
+    : "";
+}
+
 function renderBestiaryLadder(state) {
   renderBestiaryCatalogo(state);
 
   const ladder = state.bestiaryLadder || {};
   const itens = Array.isArray(ladder.itens) ? ladder.itens : [];
   const indiceAtual = Number(ladder.indiceAtual) || 0;
+  renderBestiaryLadderResumo(itens);
 
   if (!itens.length) {
     bestiaryLadderListaEl.innerHTML =
-      '<p class="fieldHint">Nenhuma caçada na escada ainda. Adicione pelo catálogo acima, na ordem de prioridade.</p>';
+      '<p class="fieldHint">Nenhuma caçada na escada ainda. Clique em "+ Adicionar caçadas" acima.</p>';
     return;
   }
 

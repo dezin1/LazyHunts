@@ -1362,13 +1362,11 @@ body {
    atuais, "já concluída", reordenar, remover) por item da escada. */
 /* v0.14.0 (TASK-003) — fluxo guiado: o formulário manual saiu (ver
    renderer.js); entram o catálogo pesquisável e o destaque do item ativo. */
-/* TASK-003-R2 — redesenho completo: modelo por CAÇADA (não por criatura) +
-   controle explícito Iniciar/Pausar + catálogo/escada em `.bestiaryLayout`.
-   Empilhados por padrão (o caso real aqui: menu lateral de 250px ou janela
-   flutuante de 268px, ver `#sidebar`/`#botFloat` acima — nenhum dos dois é
-   redimensionável hoje). Sem rolagem interna nova em lugar nenhum: quem
-   rola é sempre `#automationPanel` (regra já registrada na linha ~432 —
-   "não pode ter barra de rolagem" numa caixa dentro da outra). */
+/* TASK-003-R2.2 — o catálogo completo (podem ser dezenas de caçadas) saiu
+   da aba (virava uma "listona" e comprimia "Minha escada" na lateral
+   estreita) e foi pro modal `#bestiaryHuntModal`. A aba mostra só controle +
+   resumo de "Minha escada"; o catálogo (busca + grid de cards) só existe no
+   modal, montado sob demanda (ver renderer.js: `abrirBestiaryModal`). */
 
 .bestiaryControl { display: flex; flex-direction: column; gap: 8px; }
 .bestiaryControl > .autoToggleBtn { margin-top: 0; }
@@ -1389,32 +1387,82 @@ body {
   flex-shrink: 0;
 }
 
-/* `container-type` vai no ANCESTRAL (`#autoTabPanelBestiary`, a aba
-   inteira — já existe, nenhum wrapper novo), nunca no próprio `.bestiaryLayout`:
-   um elemento não muda de forma confiável sua PRÓPRIA `display` via
-   `@container` medindo a si mesmo (testado ao vivo nesta tarefa — a regra
-   sozinha em `.bestiaryLayout` fica sempre em `flex`, nunca vira `grid`,
-   mesmo com o container medindo mais que o breakpoint). Responde à largura
-   do PRÓPRIO painel, nunca à da janela — importante porque a janela pode
-   ser enorme com o menu lateral ainda estreito (a diferença que faria um
-   `@media` de viewport errar). */
-#autoTabPanelBestiary { container-type: inline-size; }
-.bestiaryLayout {
+.bestiaryLadderTopo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.bestiaryLadderTopo .automationGroupTitle { margin: 0; }
+.bestiaryLadderResumo { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; }
+
+.bestiaryAddHuntsBtn {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-button);
+  color: var(--text-primary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bestiaryAddHuntsBtn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- modal "Adicionar caçadas" ---------- */
+/* `position:fixed;inset:0` cobre a JANELA INTEIRA do app, não só a lateral
+   estreita de 250px onde `#automationPanel` mora — é por isso que o modal
+   consegue ser espaçoso mesmo com o menu lateral estreito: a largura dele
+   nunca dependeu do container que o abriu. Overlay escurece o resto (foco
+   visual central); botão de fechar explícito no cabeçalho, clique fora e
+   Esc também fecham (ver renderer.js). */
+.bestiaryModalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 20px;
+}
+.bestiaryModalOverlay[hidden] { display: none; }
+.bestiaryModalCard {
+  width: min(720px, 100%);
+  max-height: min(600px, 100%);
   display: flex;
   flex-direction: column;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
 }
-@container (min-width: 480px) {
-  .bestiaryLayout {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-    column-gap: 20px;
-    align-items: start;
-  }
-  /* Em 2 colunas as seções ficam lado a lado — a 2ª não pode carregar a
-     borda/respiro de "nova seção empilhada", que só faz sentido no modo de
-     1 coluna (`.automationGroup` normal). */
-  .bestiaryLadderSection { padding-top: 0; margin-top: 0; border-top: none; }
+.bestiaryModalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
 }
+.bestiaryModalHeader h3 { margin: 0; font-size: 14px; color: var(--text-primary); }
+.bestiaryModalFecharBtn {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 7px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.bestiaryModalFecharBtn:hover { color: var(--accent); background: var(--bg-hover); }
+.bestiaryModalCard .bestiaryCatalogHint { flex-shrink: 0; }
+.bestiaryModalCard .bestiarySearchInput { flex-shrink: 0; }
 
 .bestiaryCatalogHint { margin: 0 0 8px; font-size: 10.5px; }
 
@@ -1431,11 +1479,33 @@ body {
 }
 .bestiarySearchInput:focus { border-color: var(--accent); outline: none; }
 
-/* Cada caçada é uma linha leve com fio divisório, não um card grande com
-   borda+fundo próprios — menos peso visual, menos altura desperdiçada. */
-.bestiaryCatalogoLista { display: flex; flex-direction: column; }
-.bestiaryCatalogCard { padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
-.bestiaryCatalogCard:last-child { border-bottom: none; padding-bottom: 0; }
+/* Grid responsivo de cards compactos — inspirado na tela "Organizar
+   caçada" do próprio jogo (referência visual desta tarefa): densidade
+   maior que a lista antiga, porque agora vive num modal espaçoso, não numa
+   lateral de 250px. `auto-fill`/`minmax` colapsa pra 1 coluna sozinho se o
+   modal for estreito (janela do app pequena) — sem `@media`/`@container`.
+   A ROLAGEM AQUI É INTENCIONAL: é a exceção explícita desta tarefa à regra
+   geral de "nunca uma caixa de rolagem dentro da outra" — o modal É a
+   caixa dedicada, com altura própria (`.bestiaryModalCard` acima), então
+   isto é a única rolagem da tela, não uma aninhada dentro do
+   `#automationPanel`. */
+.bestiaryCatalogoLista {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
+  flex: 1;
+  min-height: 0;
+}
+.bestiaryCatalogCard {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: var(--bg-inset);
+  display: flex;
+  flex-direction: column;
+}
 .bestiaryCatalogCardHeader {
   display: flex;
   align-items: baseline;

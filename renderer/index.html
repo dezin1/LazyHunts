@@ -298,6 +298,11 @@
                ordem das criaturas e até qual fase de cada uma quer subir
                antes de passar pra próxima. Mutuamente exclusivo com a
                Expedição (só entra em ação com ela desligada). -->
+          <!-- TASK-003-R2.2 — o catálogo completo saiu da aba (virava uma
+               "listona" que comprimia "Minha escada" na lateral estreita) e
+               foi pro modal #bestiaryHuntModal, fora do fluxo de abas (ver
+               abaixo, perto de #botFloat) — assim ele nunca fica escondido
+               (display:none) por troca de aba enquanto aberto. -->
           <div class="tabPanel" id="autoTabPanelBestiary" data-tab="bestiary" hidden>
             <section class="automationSection automationGroup">
               <h4 class="automationGroupTitle">Auto Bestiary por caçada</h4>
@@ -308,24 +313,14 @@
               </details>
             </section>
 
-            <!-- TASK-003-R2 — catálogo e escada empilham em tela estreita (o
-                 caso comum: menu lateral de 250px ou janela flutuante de
-                 268px). `.bestiaryLayout` só vira 2 colunas via @container
-                 quando o próprio painel (não a janela) tiver espaço de
-                 verdade — ver renderer/styles.css. -->
-            <div class="bestiaryLayout">
-              <section class="automationSection automationGroup bestiaryCatalogSection">
-                <h4 class="automationGroupTitle">Caçadas disponíveis</h4>
-                <p class="fieldHint bestiaryCatalogHint">Clique numa criatura mapeada para adicionar a caçada à escada.</p>
-                <input type="text" id="bestiaryCatalogoSearch" class="bestiarySearchInput" placeholder="Buscar caçada ou criatura…" />
-                <div id="bestiaryCatalogoLista" class="bestiaryCatalogoLista"></div>
-              </section>
-
-              <section class="automationSection automationGroup bestiaryLadderSection">
+            <section class="automationSection automationGroup">
+              <div class="bestiaryLadderTopo">
                 <h4 class="automationGroupTitle">Minha escada</h4>
-                <div id="bestiaryLadderLista"></div>
-              </section>
-            </div>
+                <span id="bestiaryLadderResumo" class="bestiaryLadderResumo"></span>
+              </div>
+              <button type="button" id="bestiaryAddHuntsBtn" class="bestiaryAddHuntsBtn">+ Adicionar caçadas</button>
+              <div id="bestiaryLadderLista"></div>
+            </section>
           </div>
 
           <!-- v0.9.23 — analyzer próprio do bot. Tudo montado com o que a
@@ -676,6 +671,25 @@
           <button type="button" id="botDockBtn" title="Encaixar de volta no menu">⇤</button>
         </div>
         <div id="botFloatBody"></div>
+      </div>
+
+      <!-- TASK-003-R2.2 — modal "Adicionar caçadas". Fica fora de #automationPanel
+           de propósito: é `position:fixed`, cobre a janela inteira (não só a
+           lateral estreita), e não pode ser escondido por `.tabPanel[hidden]`
+           se o usuário trocar de aba com ele aberto. O catálogo pesado
+           (#bestiaryCatalogoLista) só é preenchido enquanto este modal está
+           SEM o atributo `hidden` — ver renderer.js, abrirBestiaryModal/
+           fecharBestiaryModal. -->
+      <div id="bestiaryHuntModal" class="bestiaryModalOverlay" hidden>
+        <div class="bestiaryModalCard" role="dialog" aria-modal="true" aria-labelledby="bestiaryModalTitulo">
+          <div class="bestiaryModalHeader">
+            <h3 id="bestiaryModalTitulo">Adicionar caçadas</h3>
+            <button type="button" id="bestiaryModalFecharBtn" class="bestiaryModalFecharBtn" aria-label="Fechar">✕</button>
+          </div>
+          <p class="fieldHint bestiaryCatalogHint">Clique numa criatura mapeada para adicionar a caçada à escada.</p>
+          <input type="text" id="bestiaryCatalogoSearch" class="bestiarySearchInput" placeholder="Buscar caçada ou criatura…" />
+          <div id="bestiaryCatalogoLista" class="bestiaryCatalogoLista"></div>
+        </div>
       </div>
     </main>
   </div>
