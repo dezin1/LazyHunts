@@ -83,6 +83,37 @@ function elementoDe(tag, attrs, texto) {
   };
 }
 
+// TASK-003-R2.3 — `<select>` real: `.value` reflete a `<option selected>`
+// (ou a primeira, igual ao DOM de verdade) e pode ser sobrescrito antes de
+// disparar "change", exatamente como o clique real do usuário faria.
+function elementoSelectDe(attrs, innerHtml) {
+  const handlersPorTipo = {};
+  const opcoes = [];
+  const reOption = /<option\b([^>]*)>([\s\S]*?)<\/option>/g;
+  let m;
+  while ((m = reOption.exec(innerHtml))) {
+    const oAttrs = parseAtributos(m[1]);
+    opcoes.push({ value: oAttrs.value !== undefined ? oAttrs.value : m[2], selected: oAttrs.selected !== undefined });
+  }
+  const selecionadaInicial = opcoes.find((o) => o.selected) || opcoes[0];
+  return {
+    tagName: "SELECT",
+    _attrs: attrs,
+    _opcoes: opcoes,
+    value: selecionadaInicial ? selecionadaInicial.value : "",
+    getAttribute(nome) {
+      if (!Object.prototype.hasOwnProperty.call(this._attrs, nome)) return null;
+      return this._attrs[nome] === true ? "" : this._attrs[nome];
+    },
+    addEventListener(tipo, cb) {
+      (handlersPorTipo[tipo] = handlersPorTipo[tipo] || []).push(cb);
+    },
+    disparar(tipo) {
+      (handlersPorTipo[tipo] || []).forEach((h) => h());
+    },
+  };
+}
+
 function parseElementos(html) {
   const elementos = [];
   const reButton = /<button\b([^>]*)>([\s\S]*?)<\/button>/g;
@@ -90,6 +121,8 @@ function parseElementos(html) {
   while ((m = reButton.exec(html))) elementos.push(elementoDe("button", parseAtributos(m[1]), m[2]));
   const reInput = /<input\b([^>]*?)\/?>/g;
   while ((m = reInput.exec(html))) elementos.push(elementoDe("input", parseAtributos(m[1]), ""));
+  const reSelect = /<select\b([^>]*)>([\s\S]*?)<\/select>/g;
+  while ((m = reSelect.exec(html))) elementos.push(elementoSelectDe(parseAtributos(m[1]), m[2]));
   return elementos;
 }
 
@@ -230,9 +263,16 @@ const catalogoBase = [
   { hunt: "Rat Cellars", criaturas: ["Rat"], tiers: ["Tier 1"], forca: 10 },
   { hunt: "Giant Lair", criaturas: ["Behemoth", "Cyclops"], tiers: ["Tier 3"], forca: 500 },
   { hunt: "Caçada Sem Bicho Mapeado", criaturas: [], tiers: [], forca: null },
+  // TASK-003-R2.3 — hunt dedicada aos testes de tier: 3 tiers reais, na
+  // ordem do jogo (mais fácil -> mais difícil), igual `guild.cacadas[].tiers`.
+  { hunt: "Sand Sharpie", criaturas: ["Piranha"], tiers: ["Cautious", "Bold", "Reckless"], forca: 50 },
 ];
-function estadoComLadder(itens) {
-  return { bestiaryCatalogo: catalogoBase, bestiaryLadder: { enabled: false, index: 0, itens } };
+function estadoComLadder(itens, pullLevel) {
+  return {
+    bestiaryCatalogo: catalogoBase,
+    bestiaryLadder: { enabled: false, index: 0, itens },
+    pullLevel: pullLevel || "",
+  };
 }
 
 sandbox.automationState.set("conta-1", estadoComLadder([]));
@@ -522,6 +562,95 @@ assert(elementosFalsos.bestiaryHuntModal.hidden === true, "clicar no botão '✕
 run("abrirBestiaryModal();");
 dispararDocumento("keydown", { key: "Escape" });
 assert(elementosFalsos.bestiaryHuntModal.hidden === true, "a tecla Esc também fecha o modal");
+
+// ============================================================
+// PARTE 5 — TASK-003-R2.3: nível/tier selecionável por hunt
+// ============================================================
+
+function selectDeTier(hunt) {
+  return elementosFalsos.bestiaryCatalogoLista._elementos.find(
+    (el) => el.tagName === "SELECT" && el.getAttribute("data-tier-hunt") === hunt
+  );
+}
+
+// Cenário 18 — hunt com vários tiers: o select mostra todos, na ordem do
+// catálogo (mais fácil -> mais difícil), sem inventar nenhum.
+// (Parte 4 terminou com o modal fechado via Esc — reabre pra Parte 5.)
+run("abrirBestiaryModal();");
+sandbox.automationState.set("conta-1", estadoComLadder([], "Bold"));
+enviosBestiaryLadder.length = 0;
+run('bestiaryCatalogoAssinaturaAnterior = null; renderBestiaryCatalogo(automationState.get("conta-1"));');
+let selectSand = selectDeTier("Sand Sharpie");
+assert(!!selectSand, "existe um <select> de tier pra Sand Sharpie (3 tiers reais)");
+assert(
+  JSON.stringify(selectSand._opcoes.map((o) => o.value)) === JSON.stringify(["Cautious", "Bold", "Reckless"]),
+  `as opções do select são exatamente os tiers do catálogo, na ordem — recebido: ${JSON.stringify(selectSand._opcoes.map((o) => o.value))}`
+);
+
+// Cenário 19 — tier global válido (existe entre os tiers da hunt) vira o
+// padrão selecionado.
+assert(selectSand.value === "Bold", `com pullLevel global "Bold" (existe em Sand Sharpie), o padrão selecionado é "Bold" — recebido: "${selectSand.value}"`);
+
+// Cenário 20 — tier global AUSENTE na hunt -> primeiro tier válido do
+// catálogo vira o padrão (nunca o global inventado nem vazio).
+sandbox.automationState.set("conta-1", estadoComLadder([], "Suicidal")); // "Suicidal" não existe em Sand Sharpie
+enviosBestiaryLadder.length = 0;
+run('bestiaryCatalogoAssinaturaAnterior = null; renderBestiaryCatalogo(automationState.get("conta-1"));');
+selectSand = selectDeTier("Sand Sharpie");
+assert(selectSand.value === "Cautious", `pullLevel global fora dos tiers da hunt -> padrão é o PRIMEIRO tier real ("Cautious") — recebido: "${selectSand.value}"`);
+
+// Cenário 21 — a seleção persiste no item ao adicionar (não o padrão, o que
+// o usuário efetivamente escolheu no select).
+selectSand.value = "Reckless"; // usuário troca a seleção antes de clicar
+const botaoAddPiranha = elementosFalsos.bestiaryCatalogoLista._elementos.find(
+  (el) => el.tagName === "BUTTON" && el.getAttribute("data-add-hunt") === "Sand Sharpie" && el.getAttribute("data-add-criatura") === "Piranha"
+);
+assert(!!botaoAddPiranha, "existe o botão 'Adicionar' pra Sand Sharpie + Piranha");
+botaoAddPiranha.disparar("click");
+let itensComTier = itensDoUltimoEnvio();
+const sandEntry = itensComTier.find((it) => it.hunt === "Sand Sharpie");
+assert(sandEntry && sandEntry.tier === "Reckless", `a entrada salva com o tier ESCOLHIDO ("Reckless"), não o padrão — recebido: ${sandEntry && sandEntry.tier}`);
+
+// Cenário 22 — a automação do Bestiário usa o tier do item (backend,
+// content-injected.js) — coberto em scripts/teste-bestiary-tier.mjs
+// (extração real de alvoDeCacada/tierDoBestiaryLadder), não aqui: este
+// arquivo testa só o lado do renderer. Ver ENTREGA pra detalhe.
+
+// Cenário 23 — item legado sem tier continua sem o campo (cai pro
+// cfg.pullLevel em runtime) — `itensBestiaryLadderPersistiveis` nunca
+// inventa um `tier`.
+const legadoSemTier = run('itensBestiaryLadderPersistiveis([{ hunt: "Rat Cellars", criatura: "Rat", faseAlvo: 1, concluido: false }])');
+assert(!("tier" in legadoSemTier[0]), "item legado sem tier continua SEM o campo `tier` depois de persistido (nunca inventa um valor)");
+
+// Cenário 24 — tier inválido (não pertence à hunt) não é aceito nem ao
+// adicionar, nem ao editar em "Minha escada".
+sandbox.automationState.set("conta-1", estadoComLadder([]));
+enviosBestiaryLadder.length = 0;
+run('adicionarCacadaNaEscada("Sand Sharpie", "Piranha", "Nivel-Que-Nao-Existe");');
+itensComTier = itensDoUltimoEnvio();
+assert(!("tier" in itensComTier[0]), "tier inválido na criação: a entrada é criada, mas SEM o campo tier (não inventa nem aceita o inválido)");
+
+sandbox.automationState.set("conta-1", {
+  ...estadoComLadder([{ hunt: "Sand Sharpie", criatura: "Piranha", faseAlvo: 1, concluido: false, tier: "Bold" }]),
+});
+enviosBestiaryLadder.length = 0;
+run('ajustarTier(0, "Nivel-Que-Nao-Existe");');
+assert(enviosBestiaryLadder.length === 0, "editar pra um tier inválido em 'Minha escada' não envia comando nenhum (fica com o valor anterior)");
+
+// Cenário 25 — editar o tier de uma entrada já existente, em "Minha
+// escada", sem remover a hunt.
+sandbox.automationState.set("conta-1", {
+  ...estadoComLadder([{ hunt: "Sand Sharpie", criatura: "Piranha", faseAlvo: 1, concluido: false, tier: "Bold" }]),
+});
+run('ajustarTier(0, "Reckless");');
+itensComTier = itensDoUltimoEnvio();
+assert(itensComTier.length === 1 && itensComTier[0].hunt === "Sand Sharpie", "editar o tier não remove nem duplica a entrada");
+assert(itensComTier[0].tier === "Reckless", `tier editado com sucesso pra "Reckless" — recebido: ${itensComTier[0].tier}`);
+
+// Cenário 26 — modal fechado continua sem catálogo pesado no DOM mesmo
+// depois de toda a interação com tiers acima (regressão do R2.2).
+run("fecharBestiaryModal();");
+assert(elementosFalsos.bestiaryCatalogoLista.innerHTML === "", "modal fechado ao final: catálogo continua vazio no DOM");
 
 // ============================================================
 if (falhas > 0) {

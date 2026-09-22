@@ -857,6 +857,21 @@
     return atual && atual.item ? atual.item.hunt || null : null;
   }
 
+  // TASK-003-R2.3 — nível/tier da entrada ATUAL do Ladder, mesmo padrão de
+  // `nomeDoBestiaryLadder`. `null` quando a escada não está decidindo a
+  // caçada agora, OU quando o item é LEGADO e não tem `tier` salvo — nesse
+  // caso quem chama cai pra `cfg.pullLevel` (o nível global da aba Caçada),
+  // exatamente como já acontecia ANTES desta entrega pra toda caçada
+  // escolhida pelo Ladder (o defeito que esta tarefa corrige). O valor é
+  // sempre o `.name` do tier (mesma string que já é usada em `cfg.pullLevel`
+  // hoje e que `guild.cacadas[].tiers[].name` traz do protocolo — nunca um
+  // id/índice inventado).
+  function tierDoBestiaryLadder(cfg) {
+    const atual = bestiaryLadderItemAtual(cfg);
+    const tier = atual && atual.item ? atual.item.tier : null;
+    return typeof tier === "string" && tier ? tier : null;
+  }
+
   // Acha o próximo item NÃO concluído a partir de `apartirDe` (exclusive),
   // dando a volta na lista uma vez. `null` = todos concluídos.
   function bestiaryLadderProximoIndice(itens, apartirDe) {
@@ -919,7 +934,15 @@
     const ladderNome = nomeDoBestiaryLadder(cfg);
     const padrao = {
       nome: ladderNome || cfg.huntName || atual,
-      pullLevel: cfg.pullLevel,
+      // TASK-003-R2.3 — DEFEITO CORRIGIDO: até aqui, `pullLevel` era SEMPRE
+      // `cfg.pullLevel` (o nível global da aba Caçada), mesmo quando quem
+      // escolheu a caçada foi o Ladder (`ladderNome`). Uma entrada do
+      // Bestiary com nível próprio nunca era respeitada — a caçada sempre
+      // começava no tier configurado na aba Caçada, não no da escada.
+      // Agora, quando o Ladder está decidindo (`ladderNome` truthy), usa o
+      // tier DA ENTRADA; item legado sem `tier` salvo cai pra
+      // `cfg.pullLevel`, igual sempre foi.
+      pullLevel: ladderNome ? tierDoBestiaryLadder(cfg) || cfg.pullLevel : cfg.pullLevel,
       expedicao: false,
       objetivo: null,
     };
@@ -4797,7 +4820,18 @@
           processarAvancoDoBestiaryLadder(cfg);
         }
         log("Personagem não está caçando e já tem stamina suficiente — retomando a caçada configurada...");
-        await ensureHunting(cfg, nomeDoBestiaryLadder(cfg));
+        // TASK-003-R2.3 — mesmo defeito de `alvoDeCacada`: `ensureHunting`
+        // sempre lê `cfg.pullLevel` (nunca olha pro nome retomado), então
+        // sem este override o Ladder retomava a caçada certa no tier
+        // ERRADO. `nomeLadderRetomar` só existe pra não chamar
+        // `nomeDoBestiaryLadder`/`tierDoBestiaryLadder` duas vezes.
+        {
+          const nomeLadderRetomar = nomeDoBestiaryLadder(cfg);
+          const cfgParaRetomar = nomeLadderRetomar
+            ? { ...cfg, pullLevel: tierDoBestiaryLadder(cfg) || cfg.pullLevel }
+            : cfg;
+          await ensureHunting(cfgParaRetomar, nomeLadderRetomar);
+        }
         if (estavaTreinando && isTraining()) {
           await cancelTraining();
           log("A caçada começou e o treino continuou ativo — cancelei o treino pra não ficar com os dois ao mesmo tempo.");
@@ -4856,7 +4890,10 @@
             updatePanelStatus("Indo pra próxima do Auto Bestiary");
             await leaveHunt();
             zerarDeteccaoDeSpawn();
-            await ensureHunting(cfg, destino);
+            // TASK-003-R2.3 — mesmo override de tier dos outros dois pontos:
+            // sem isso, a troca pra próxima caçada da escada ignorava o
+            // nível salvo nela e usava `cfg.pullLevel` (global).
+            await ensureHunting({ ...cfg, pullLevel: tierDoBestiaryLadder(cfg) || cfg.pullLevel }, destino);
             updatePanelStatus("Caçando (Auto Bestiary)");
             log(`Auto Bestiary: caçando "${destino}" agora.`);
             consecutiveErrors = 0;
@@ -7095,7 +7132,7 @@
               const hunt = it.hunt.trim();
               const faseAlvo = Number(it.faseAlvo);
               if (!Number.isFinite(faseAlvo) || faseAlvo < 1) return null;
-              return {
+              const novoItem = {
                 hunt,
                 // `criatura` é a CRIATURA DE REFERÊNCIA da entrada — mesmo
                 // campo/semântica de sempre, usada por
@@ -7107,6 +7144,31 @@
                 faseAlvo: Math.round(faseAlvo),
                 concluido: !!it.concluido,
               };
+              // TASK-003-R2.3 — `tier` é OPCIONAL de propósito: item legado
+              // sem tier próprio continua sem o campo (nunca inventa um
+              // valor aqui), e `tierDoBestiaryLadder` cai pra
+              // `cfg.pullLevel` em runtime pra esse caso — "não sobrescrever
+              // tier legado ou global silenciosamente". Quando vem um
+              // valor, valida contra os tiers REAIS da caçada em
+              // `guild.cacadas` antes de aceitar — se a caçada já é
+              // conhecida e o tier não é um dos dela, descarta só o tier
+              // (a entrada inteira continua sendo salva, caindo pro
+              // fallback de `cfg.pullLevel` em runtime; nunca bloqueia
+              // salvar/iniciar a caçada por causa disso).
+              if (typeof it.tier === "string" && it.tier.trim()) {
+                const tierProposto = it.tier.trim();
+                const huntCatalogo = guild.cacadas.find((h) => h && h.name === hunt);
+                const tiersReais = huntCatalogo && Array.isArray(huntCatalogo.tiers)
+                  ? huntCatalogo.tiers.map((t) => t && t.name).filter(Boolean)
+                  : null;
+                // `tiersReais === null` = caçada ainda não conhecida (tipo 42
+                // não chegou, ou nome não bate) — não dá pra provar que o
+                // tier é inválido, então não descarta às cegas.
+                if (tiersReais === null || tiersReais.includes(tierProposto)) {
+                  novoItem.tier = tierProposto;
+                }
+              }
+              return novoItem;
             })
             .filter(Boolean)
         : [];

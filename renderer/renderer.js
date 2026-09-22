@@ -1041,7 +1041,13 @@ function itensBestiaryLadderPersistiveis(itens) {
       const hunt = typeof it.hunt === "string" ? it.hunt.trim() : "";
       if (!hunt) return null; // sem hunt válido — nem manda, não é dedup
       const criatura = typeof it.criatura === "string" && it.criatura.trim() ? it.criatura.trim() : hunt;
-      return { hunt, criatura, faseAlvo: Number(it.faseAlvo) || 1, concluido: !!it.concluido };
+      const novoItem = { hunt, criatura, faseAlvo: Number(it.faseAlvo) || 1, concluido: !!it.concluido };
+      // TASK-003-R2.3 — `tier` só é incluído quando já existe um valor real
+      // (string não vazia). Item legado sem tier passa por aqui sem NUNCA
+      // ganhar um `tier` inventado — continua caindo no fallback de
+      // `cfg.pullLevel` (global) em runtime, exatamente como hoje.
+      if (typeof it.tier === "string" && it.tier.trim()) novoItem.tier = it.tier.trim();
+      return novoItem;
     })
     .filter(Boolean);
 }
@@ -1115,18 +1121,38 @@ function entradaDaCacada(itens, hunt) {
   return (itens || []).find((it) => it && it.hunt === hunt) || null;
 }
 
+// TASK-003-R2.3 — defesa em profundidade (o backend também valida em
+// `applyConfig`): só aceita um `tier` se ele for um dos tiers REAIS da hunt
+// no catálogo já carregado. Catálogo ainda não carregado (`bestiaryCatalogo`
+// null/hunt ausente) não é motivo pra rejeitar — não dá pra provar que é
+// inválido, então deixa passar (mesmo critério do backend).
+function tierValidoParaHunt(state, hunt, tier) {
+  if (!tier) return null;
+  const catalogo = Array.isArray(state && state.bestiaryCatalogo) ? state.bestiaryCatalogo : null;
+  const catalogoHunt = catalogo ? catalogo.find((h) => h && h.hunt === hunt) : null;
+  if (!catalogoHunt) return tier; // não dá pra validar — não inventa rejeição
+  return Array.isArray(catalogoHunt.tiers) && catalogoHunt.tiers.includes(tier) ? tier : null;
+}
+
 // Cria a entrada da caçada, pinada na criatura clicada como referência.
 // Não faz nada se a caçada já estiver na escada (clicar de novo, na mesma
 // criatura ou numa criatura irmã, nunca duplica a prioridade — pra trocar a
 // referência de uma entrada já existente é `trocarCriaturaReferencia`).
 // `criatura` é OBRIGATÓRIA e sempre real, vinda de `bestiaryCatalogo`
 // (protocolo) — nunca inventada como `hunt`.
-function adicionarCacadaNaEscada(hunt, criatura) {
+// TASK-003-R2.3 — `tier` é OPCIONAL: vem do `<select>` do card no modal
+// (sempre um valor real de `h.tiers`, nunca digitado). Sem tier (chamada
+// antiga, ou catálogo sem tiers mapeados pra essa caçada), a entrada nasce
+// sem o campo — cai no fallback de `cfg.pullLevel` em runtime.
+function adicionarCacadaNaEscada(hunt, criatura, tier) {
   if (!selectedAutomationTabId || !hunt || !criatura) return;
   const atual = automationState.get(selectedAutomationTabId) || {};
   const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
   if (entradaDaCacada(itensAtuais, hunt)) return;
-  const novo = itensAtuais.concat([{ hunt, criatura, faseAlvo: 1, concluido: false }]);
+  const novoItem = { hunt, criatura, faseAlvo: 1, concluido: false };
+  const tierValido = tierValidoParaHunt(atual, hunt, typeof tier === "string" ? tier.trim() : "");
+  if (tierValido) novoItem.tier = tierValido;
+  const novo = itensAtuais.concat([novoItem]);
   enviarBestiaryLadder(novo);
 }
 
@@ -1166,6 +1192,22 @@ function ajustarFaseAlvo(index, delta) {
   if (!itensAtuais[index]) return;
   const novaFase = Math.max(1, (Number(itensAtuais[index].faseAlvo) || 1) + delta);
   const novo = itensAtuais.map((it, i) => (i === index ? { ...it, faseAlvo: novaFase } : it));
+  enviarBestiaryLadder(novo);
+}
+
+// TASK-003-R2.3 — editar o nível de uma entrada JÁ existente em "Minha
+// escada", sem precisar remover a caçada. Por ÍNDICE, mesmo motivo do
+// stepper de fase acima (duplicata legada por hunt é legítima). O
+// `<select>` da linha só lista tiers reais daquela caçada (ver
+// `renderBestiaryLadder`) — nunca chega aqui um valor digitado.
+function ajustarTier(index, tier) {
+  if (!selectedAutomationTabId || !Number.isInteger(index) || index < 0 || !tier) return;
+  const atual = automationState.get(selectedAutomationTabId) || {};
+  const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
+  if (!itensAtuais[index]) return;
+  const tierValido = tierValidoParaHunt(atual, itensAtuais[index].hunt, tier);
+  if (!tierValido) return; // tier fora dos tiers reais da hunt — não salva
+  const novo = itensAtuais.map((it, i) => (i === index ? { ...it, tier: tierValido } : it));
   enviarBestiaryLadder(novo);
 }
 
@@ -1277,6 +1319,10 @@ function renderBestiaryCatalogo(state) {
     busca,
     n: catalogo.length,
     ladder: itensLadder.map((i) => `${i.hunt}|${i.criatura}`),
+    // TASK-003-R2.3 — o padrão do seletor de nível depende do pullLevel
+    // global; se ele mudar enquanto o modal está aberto, a assinatura
+    // precisa mudar junto pra não deixar um default desatualizado na tela.
+    pullLevel: state.pullLevel || "",
   });
   if (assinatura === bestiaryCatalogoAssinaturaAnterior && document.activeElement !== bestiaryCatalogoSearchInput) {
     return;
@@ -1288,9 +1334,25 @@ function renderBestiaryCatalogo(state) {
     return;
   }
 
+  const pullLevelGlobal = typeof state.pullLevel === "string" ? state.pullLevel : "";
+
   bestiaryCatalogoListaEl.innerHTML = filtrado
     .map((h) => {
       const entrada = entradaDaCacada(itensLadder, h.hunt);
+      // TASK-003-R2.3 — padrão pedido: o nível global da aba Caçada, SE ele
+      // existir entre os tiers reais desta hunt; senão o primeiro tier do
+      // catálogo (ordem do jogo, do mais fácil). Nunca um valor inventado —
+      // sempre um item de `h.tiers`, que já vem do protocolo.
+      const tierPadrao = h.tiers.length ? (h.tiers.includes(pullLevelGlobal) ? pullLevelGlobal : h.tiers[0]) : "";
+      // O seletor de nível só faz sentido ANTES de adicionar — depois, quem
+      // edita é "Minha escada" (regra 3 da tarefa: uma única fonte de
+      // verdade por vez, igual já foi feito pro checkbox->botão).
+      const tierSelectHtml =
+        !entrada && h.tiers.length
+          ? `<label class="bestiaryCatalogTierRow">Nível: <select class="bestiaryCatalogTierSelect" data-tier-hunt="${escapeHtml(h.hunt)}">
+              ${h.tiers.map((t) => `<option value="${escapeHtml(t)}"${t === tierPadrao ? " selected" : ""}>${escapeHtml(t)}</option>`).join("")}
+            </select></label>`
+          : "";
       const criaturasHtml = h.criaturas.length
         ? h.criaturas
             .map((c) => {
@@ -1323,14 +1385,27 @@ function renderBestiaryCatalogo(state) {
           ${entrada ? '<span class="bestiaryCatalogCardNaEscada">Na escada</span>' : ""}
         </div>
         <div class="bestiaryCatalogMeta">Tiers: ${tiersTxt} · Força: ${forcaTxt}</div>
+        ${tierSelectHtml}
         <div class="bestiaryCatalogCreatures">${criaturasHtml}</div>
       </div>`;
     })
     .join("");
 
+  // TASK-003-R2.3 — "deixe claro qual tier será usado ao adicionar": o
+  // botão "Adicionar" lê, na hora do clique, o `<select>` de nível DO MESMO
+  // card (nunca um estado à parte pra sincronizar) — o que está selecionado
+  // na tela é exatamente o que vai ser salvo, sem indireção.
   bestiaryCatalogoListaEl.querySelectorAll("button[data-add-hunt]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      adicionarCacadaNaEscada(btn.getAttribute("data-add-hunt"), btn.getAttribute("data-add-criatura"));
+      const hunt = btn.getAttribute("data-add-hunt");
+      // Busca o `<select>` de nível DESSA hunt pelo atributo (não por
+      // proximidade no DOM) — cada hunt tem no máximo 1 select (só existe
+      // enquanto ela não está na escada), então o atributo já basta pra
+      // identificar sem ambiguidade.
+      const tierSelect = Array.from(bestiaryCatalogoListaEl.querySelectorAll("select[data-tier-hunt]")).find(
+        (sel) => sel.getAttribute("data-tier-hunt") === hunt
+      );
+      adicionarCacadaNaEscada(hunt, btn.getAttribute("data-add-criatura"), tierSelect ? tierSelect.value : null);
     });
   });
   bestiaryCatalogoListaEl.querySelectorAll("button[data-switch-hunt]").forEach((btn) => {
@@ -1376,6 +1451,15 @@ function renderBestiaryLadder(state) {
     if (chave) contagemPorHunt.set(chave, (contagemPorHunt.get(chave) || 0) + 1);
   }
 
+  // TASK-003-R2.3 — tiers reais de cada hunt já configurada, pra montar o
+  // seletor de "Minha escada" sem inventar opção nenhuma. Índice pelo nome
+  // da caçada (`state.bestiaryCatalogo` é a mesma fonte do modal).
+  const catalogoPorHunt = new Map();
+  for (const h of Array.isArray(state.bestiaryCatalogo) ? state.bestiaryCatalogo : []) {
+    if (h && h.hunt) catalogoPorHunt.set(h.hunt, h);
+  }
+  const pullLevelGlobalLadder = typeof state.pullLevel === "string" ? state.pullLevel : "";
+
   const linhas = itens.map((it, i) => {
     const faseAlvo = Number(it.faseAlvo) || 1;
     const faseAtual = Number(it.faseAtual) || 0;
@@ -1384,6 +1468,25 @@ function renderBestiaryLadder(state) {
     const ativo = !done && i === indiceAtual;
     const huntLabel = it.hunt || it.criatura || "?";
     const eDuplicataLegada = it.hunt && contagemPorHunt.get(it.hunt) > 1;
+    // TASK-003-R2.3 — regra 4 da tarefa: item legado sem `tier` próprio usa
+    // `cfg.pullLevel` (global) em runtime — a linha deixa isso EXPLÍCITO em
+    // vez de fingir que não há nível nenhum. Editável sempre que os tiers
+    // reais da caçada já são conhecidos (catálogo carregado); senão, só
+    // mostra o valor atual como texto (nunca inventa opções).
+    const catalogoDaHunt = it.hunt ? catalogoPorHunt.get(it.hunt) : null;
+    const tiersDaHunt = catalogoDaHunt && Array.isArray(catalogoDaHunt.tiers) ? catalogoDaHunt.tiers : [];
+    const tierAtual = typeof it.tier === "string" && it.tier ? it.tier : "";
+    const tierParaSelect = tierAtual || (tiersDaHunt.includes(pullLevelGlobalLadder) ? pullLevelGlobalLadder : tiersDaHunt[0] || "");
+    let tierHtml;
+    if (tiersDaHunt.length > 1) {
+      tierHtml = `<select class="bestiaryLadderTierSelect" data-ladder-tier="${i}" aria-label="Tier de ${escapeHtml(huntLabel)}">
+        ${tiersDaHunt.map((t) => `<option value="${escapeHtml(t)}"${t === tierParaSelect ? " selected" : ""}>${escapeHtml(t)}</option>`).join("")}
+      </select>`;
+    } else if (tierAtual) {
+      tierHtml = `<span class="bestiaryLadderTierValor">${escapeHtml(tierAtual)}</span>`;
+    } else {
+      tierHtml = '<span class="fieldHint">nível da aba Caçada</span>';
+    }
     // TASK-003-R2 — composição informativa: a criatura de referência (a que
     // decide progresso/conclusão) sempre aparece; se a caçada tem outras
     // criaturas mapeadas além dela, isso vira só um número extra ao lado —
@@ -1401,6 +1504,7 @@ function renderBestiaryLadder(state) {
       </div>
       ${eDuplicataLegada ? '<div class="bestiaryLadderRowLegado">config. legada — duplicata desta caçada, não consolidada automaticamente</div>' : ""}
       ${criaturaSubLine}
+      <div class="bestiaryLadderRowTier">Tier: ${tierHtml}</div>
       <div class="expBar"><div class="expFill" style="width:${pct}%"></div></div>
       <div class="bestiaryLadderRowMeta">
         ${it.abatesAtuais != null ? `<span class="fieldHint">${fmtNum(it.abatesAtuais)} abates</span>` : "<span></span>"}
@@ -1424,6 +1528,11 @@ function renderBestiaryLadder(state) {
   });
   bestiaryLadderListaEl.innerHTML = linhas.join("");
 
+  bestiaryLadderListaEl.querySelectorAll("select[data-ladder-tier]").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      ajustarTier(Number(sel.getAttribute("data-ladder-tier")), sel.value);
+    });
+  });
   bestiaryLadderListaEl.querySelectorAll("input[data-ladder-done]").forEach((chk) => {
     chk.addEventListener("change", () => {
       const i = Number(chk.getAttribute("data-ladder-done"));

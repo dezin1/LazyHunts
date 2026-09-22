@@ -1534,6 +1534,25 @@ body {
   white-space: nowrap;
 }
 .bestiaryCatalogMeta { margin: 0 0 6px; font-size: 10.5px; color: var(--text-muted); }
+/* TASK-003-R2.3 — nível/tier da caçada, visível ANTES de adicionar (regra
+   explícita da tarefa). Some sozinho quando a hunt já está na escada (edição
+   de tier passa a ser só em "Minha escada" — uma única fonte de verdade). */
+.bestiaryCatalogTierRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin: 0 0 6px;
+}
+.bestiaryCatalogTierSelect {
+  font-size: 10.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-field);
+  color: var(--text-secondary);
+}
 .bestiaryCatalogCreatures { display: flex; flex-wrap: wrap; gap: 6px; }
 .bestiaryCreatureChip {
   display: inline-flex;
@@ -1588,6 +1607,24 @@ body {
   color: var(--text-muted);
   margin-top: -2px;
 }
+/* TASK-003-R2.3 — tier compacto por entrada, editável sem remover a hunt. */
+.bestiaryLadderRowTier {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.bestiaryLadderTierSelect {
+  font-size: 10.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-field);
+  color: var(--text-secondary);
+}
+.bestiaryLadderTierValor { color: var(--text-secondary); }
 /* TASK-003-R2.1 — aviso, não ação: existe pra deixar visível que duas
    entradas compartilham a mesma caçada (config. legada, nunca consolidada
    sozinha), sem cor de erro/perigo — não é um problema a corrigir agora. */
