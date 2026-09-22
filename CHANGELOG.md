@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.0-bestiary.3 — 2026-09-22 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Diagnóstico: cobrir a falha ANTES da leitura de tier
+
+Na `.2`, o `[MAPEAR-DIAG]` só disparava se a caçada abrisse mas o seletor de tier não aparecesse. André testou com a `.2` rodando (confirmado pelo rodapé) e nenhum `[MAPEAR-DIAG]` saiu, mesmo com 2 de 3 caçadas falhando — ou seja, a falha real é ANTES disso: `findHuntEntry()` não está achando o botão da caçada na lista (estrutura da lista pode ter mudado, ou o nome não bate mais exatamente com o que veio da varredura inicial). Agora esse caminho também loga `[MAPEAR-DIAG]`, uma vez por varredura.
+
 ## 0.13.0-bestiary.2 — 2026-09-22 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário, número novo só porque o conjunto abaixo já foi testado manualmente e precisa ficar identificável.

@@ -7112,6 +7112,13 @@
       const entry = findHuntEntry(win, name);
       if (!entry) {
         failed++;
+        if (!diagTiersJaLogado) {
+          diagTiersJaLogado = true;
+          log(
+            `[MAPEAR-DIAG] "${name}": não achei o botão dessa caçada na lista (findHuntEntry) — ` +
+              `pode ter mudado a estrutura da lista, ou o nome não bate mais exatamente.`
+          );
+        }
         continue;
       }
       await humanClick(entry);
