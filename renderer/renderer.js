@@ -298,6 +298,14 @@ async function baixarBaseline(tab, pacote) {
   if (!pacote) return;
   try {
     if (versaoDoApp) pacote.versao = versaoDoApp;
+    // O atributo dentro do webview informa se ESTA conta foi freada. Este
+    // retrato do host evita ambiguidade: a conta selecionada fica solta mesmo
+    // com o toggle global ligado.
+    pacote.renderBrakeHost = {
+      toggleLigado: freioLigado(),
+      contaDeveFrear: deveFrear(tab.id),
+      confirmacao: renderBrakeConfirmations.get(tab.id) || null,
+    };
     // A leitura já existente do Electron entra no mesmo artefato para que o
     // baseline de DOM/WS e CPU/RAM seja comparável por conta.
     pacote.cpuRam = await window.hunteraFarm.getPerfMetrics(mapaDeContasParaMedicao()).catch(() => null);
