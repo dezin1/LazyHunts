@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0-bestiary.4 — 2026-09-22 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Correção: "Mapear" catálogo perdia caçadas no meio da varredura
+
+Causa raiz confirmada ao vivo pelo `[MAPEAR-DIAG]` da `.3`: "Tortoise Shore" (e outra caçada) não eram mais encontradas pelo `findHuntEntry` no meio do mapeamento, mesmo tendo aparecido certinho na varredura inicial de nomes. O código confiava que a lista inteira (aberta com busca vazia) continuava toda renderizada do início ao fim — em listas maiores isso não se sustenta depois de já ter clicado em outra caçada.
+
+Agora cada caçada é buscada pelo nome antes de clicar nela, igual ao fluxo que já inicia caçadas de verdade (`pickAndStartHunt`) e nunca teve esse problema. `[MAPEAR-DIAG]` continua registrado como rede de segurança, caso alguma caçada ainda falhe por outro motivo.
+
 ## 0.13.0-bestiary.3 — 2026-09-22 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.

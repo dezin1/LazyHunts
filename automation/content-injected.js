@@ -7107,15 +7107,24 @@
     let failed = 0;
     let diagTiersJaLogado = false;
     for (const name of names) {
-      // A lista inteira já está renderizada (busca vazia), então é só achar a
-      // entrada e clicar — sem re-buscar/refiltrar a cada caçada.
-      const entry = findHuntEntry(win, name);
+      // CORREÇÃO — antes confiava que a lista inteira (busca vazia) ficava
+      // renderizada do início ao fim da varredura e só reconsultava
+      // `findHuntEntry` na hora de clicar. Diagnóstico ao vivo (22/09)
+      // confirmou que isso quebra no meio: uma lista grande pode não manter
+      // toda entrada montada depois de já ter clicado em outra (a caçada
+      // clicada muda de estado/expande, a lista pode reordenar/rolar). O
+      // sintoma era "Tortoise Shore" (e outra) não sendo mais encontradas
+      // pelo `findHuntEntry`, mesmo tendo aparecido na varredura inicial de
+      // nomes. Agora busca pelo NOME de cada caçada antes de clicar nela —
+      // igual ao que `pickAndStartHunt` já faz (e nunca teve esse defeito).
+      if (search) setInputValue(search, name);
+      const entry = await waitFor(() => findHuntEntry(win, name), 4000);
       if (!entry) {
         failed++;
         if (!diagTiersJaLogado) {
           diagTiersJaLogado = true;
           log(
-            `[MAPEAR-DIAG] "${name}": não achei o botão dessa caçada na lista (findHuntEntry) — ` +
+            `[MAPEAR-DIAG] "${name}": não achei o botão dessa caçada mesmo buscando pelo nome (findHuntEntry) — ` +
               `pode ter mudado a estrutura da lista, ou o nome não bate mais exatamente.`
           );
         }
