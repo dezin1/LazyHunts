@@ -7046,6 +7046,40 @@
   // quem inicia de verdade é o botão "Iniciar caçada"/"Iniciar com o time",
   // que não é tocado aqui. Por isso a varredura é segura mesmo com a conta
   // logada e parada na cidade.
+  // DIAG-MAPEAR-TIERS — André não tem acesso a DevTools no ambiente dele
+  // (bloqueado), então não dá pra pedir pra ele inspecionar o DOM na mão
+  // quando o mapeamento de tiers trava. Se o seletor `.hunt-tiers
+  // .hunt-tier` não achar nada (suspeita: o jogo renomeou a classe numa
+  // atualização), loga — uma vez por varredura, pro log da conta (visível
+  // na aba Caçada, sem precisar de DevTools) — tudo que precisamos pra
+  // achar o seletor novo: elementos com "tier" na classe (pode ter sido só
+  // renomeada) e os botões visíveis na janela (pode ter virado outro tipo
+  // de elemento).
+  function diagnosticarSeletorDeTiers(win, huntName) {
+    try {
+      const comTierNaClasse = Array.from(win.querySelectorAll('[class*="tier" i]'))
+        .slice(0, 25)
+        .map(
+          (el) =>
+            `${el.tagName.toLowerCase()}.${String(el.className || "").trim().replace(/\s+/g, ".")}="${el.textContent.trim().slice(0, 30)}"`
+        );
+      const botoesVisiveis = Array.from(win.querySelectorAll("button"))
+        .filter((b) => isVisible(b))
+        .slice(0, 30)
+        .map(
+          (b) =>
+            `button.${String(b.className || "").trim().replace(/\s+/g, ".")}="${b.textContent.trim().slice(0, 30)}"`
+        );
+      log(
+        `[MAPEAR-DIAG] "${huntName}": o seletor ".hunt-tiers .hunt-tier" não achou nada. ` +
+          `Elementos com "tier" na classe (${comTierNaClasse.length}): ${comTierNaClasse.join(" | ") || "NENHUM"}. ` +
+          `Botões visíveis na janela (${botoesVisiveis.length}): ${botoesVisiveis.join(" | ") || "NENHUM"}.`
+      );
+    } catch (err) {
+      log(`[MAPEAR-DIAG] falhou ao coletar diagnóstico: ${(err && err.message) || err}`, true);
+    }
+  }
+
   async function scrapeFullCatalog() {
     const alreadyOpen = !!queryVisible(document, SEL.huntWindow);
     const opened = await ensureHuntWindowOpen();
@@ -7071,6 +7105,7 @@
     const tiersByHunt = {};
     let done = 0;
     let failed = 0;
+    let diagTiersJaLogado = false;
     for (const name of names) {
       // A lista inteira já está renderizada (busca vazia), então é só achar a
       // entrada e clicar — sem re-buscar/refiltrar a cada caçada.
@@ -7081,6 +7116,10 @@
       }
       await humanClick(entry);
       const ready = await waitFor(() => win.querySelector(SEL.huntTiers), 4000);
+      if (!ready && !diagTiersJaLogado) {
+        diagTiersJaLogado = true;
+        diagnosticarSeletorDeTiers(win, name);
+      }
       const tiers = ready
         ? Array.from(win.querySelectorAll(SEL.huntTiers)).map((b) => b.textContent.trim()).filter(Boolean)
         : [];

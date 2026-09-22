@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0-bestiary.2 — 2026-09-22 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário, número novo só porque o conjunto abaixo já foi testado manualmente e precisa ficar identificável.
+
+### Correção: jogo travava em "Carregando o jogo…" sem um jeito de resolver
+
+Trazido também pra cá do fix já publicado em produção (`main`, 0.12.5): reload comum (`webview.reload()`) não resolve quando o Chromium continua servindo um bundle JS velho do cache HTTP (ou de um Service Worker). Novo botão **"Recarregar sem cache"** (popover da lupa, ao lado do reload comum): limpa cache HTTP + service workers/Cache Storage só da partição daquela conta — não desloga (cookies/localStorage preservados).
+
+### Diagnóstico: mapeamento de "Tamanho do pull" travando em "clique em ↻ Mapear"
+
+André reportou o "Mapear catálogo" (aba Caçada) deixando o dropdown de tier vazio mesmo depois de clicar em atualizar, possivelmente ligado a uma atualização do jogo no mesmo dia. Sem acesso a DevTools no ambiente dele, não dá pra inspecionar o DOM na mão — este ciclo só ADICIONA instrumentação (`[MAPEAR-DIAG]` no log da conta, aba Histórico): quando o seletor `.hunt-tiers .hunt-tier` não acha nada pra uma caçada, loga os elementos com "tier" na classe e os botões visíveis na janela, uma vez por varredura. Nenhuma correção funcional ainda — precisa do log real pra saber se é seletor mudado, timing, ou caçada sem opção de tier.
+
 ## 0.13.0-bestiary.1 — 2026-09-22 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Existe pra dar ao André um número concreto pra apontar quando testar o Bestiário novo ("estou na 0.13.0-bestiary.1"), não uma promessa de que o 0.13.0 definitivo vai sair exatamente assim. Feedback deste ciclo pode ainda mudar comportamento antes do release de verdade.
