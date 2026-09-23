@@ -843,29 +843,43 @@
   }
 
   // v0.13.0-fix — o tipo 92 só dispara no EXATO abate que cruza o limiar de
-  // uma fase, NESTA sessão — uma criatura que já passou da fase 1 em
-  // sessões anteriores nunca gera esse evento de novo, e ficava presa
-  // mostrando "Fase 0" pra sempre mesmo com dezenas de milhares de abates
-  // (achado documentado em huntera-automacao/CLAUDE.md, 22/09/2026, print
-  // real da Cyclopedia do André: Adult Goanna, Manticore, Sphinx, Clomp e
-  // Ogre Sage todos com `killsRequired:2500` pra Fase 1). Como a Fase 1
-  // custa sempre 2.500 abates cumulativos — confirmado em várias classes de
-  // criatura diferentes —, usa isso como PISO quando não há evento de fase
-  // nesta sessão. Fases 2/3 NÃO são inferidas: os limiares delas ainda não
-  // têm confirmação nenhuma pra criatura genérica (só uma amostra, Adult
-  // Goanna, com 5.000/10.000 incrementais) — inventar aqui seria chutar
-  // exatamente o que o projeto decidiu nunca fazer com número de jogo.
+  // uma fase, NESTA sessão — uma criatura que já passou de fase em sessões
+  // anteriores nunca gera esse evento de novo, e ficava presa mostrando
+  // "Fase 0" pra sempre mesmo com dezenas de milhares de abates.
+  //
+  // v0.13.0-bestiary.13 — LIMIAR CONFIRMADO PRA QUALQUER FASE (não só a 1).
+  // Captura de protocolo real (23/09/2026, conta Kinazinho, tipo 9) trouxe
+  // `kills`/`stages` de 6 criaturas diferentes ao mesmo tempo — ghoul,
+  // tortoise, bloodCrab, mutatedBat, mutatedTiger, thornbackTortoise — e a
+  // fórmula bateu nas 6, sem exceção: fase N custa `2500 × (2^N − 1)`
+  // abates CUMULATIVOS (2.500 / 7.500 / 17.500 / 37.500 / 77.500 /
+  // 157.500...), ou seja, cada fase dobra o incremento da anterior. Prova:
+  // tortoise com 85.334 abates bate exatamente entre o limiar da fase 5
+  // (77.500) e da fase 6 (157.500) — e o `stages.tortoise:4` do próprio
+  // tipo 9 (0-indexed) confirma fase 5. O mesmo raciocínio bateu certo pra
+  // TODAS as outras 5 criaturas da mesma captura. Substitui o piso "só fase
+  // 1" que a `.7`/`.8` usavam por cautela, na falta desta confirmação.
+  function faseBestiaryPorAbates(abates) {
+    if (!Number.isFinite(abates) || abates < 2500) return 0;
+    let fase = 0;
+    let cumulativo = 0;
+    let incremento = 2500;
+    while (abates >= cumulativo + incremento) {
+      cumulativo += incremento;
+      fase++;
+      incremento *= 2;
+    }
+    return fase;
+  }
+
   // Único lugar que decide "fase atual" de uma CHAVE já normalizada — usado
   // tanto pela decisão de avanço da escada (`bestiaryLadderFaseAtual`
-  // abaixo) quanto pelo `sendState()` que alimenta a tela (antes duplicava
-  // essa conta direto com `economia.bestiarioFases.get(...) || 0`, sem
-  // passar pelo piso dos 2.500 abates — por isso a tela continuava
-  // mostrando "Fase 0" mesmo depois desta correção existir).
+  // abaixo) quanto pelo `sendState()` que alimenta a tela.
   function faseAtualPorChave(chave) {
     const porEvento = economia.bestiarioFases.get(chave) || 0;
     const abates = economia.bestiario.get(chave) || 0;
-    const porAbatesFase1 = abates >= 2500 ? 1 : 0;
-    return Math.max(porEvento, porAbatesFase1);
+    const porAbates = faseBestiaryPorAbates(abates);
+    return Math.max(porEvento, porAbates);
   }
 
   function bestiaryLadderFaseAtual(item) {

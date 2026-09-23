@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0-bestiary.13 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Descoberta: fórmula do limiar de fase do Bestiary, confirmada pra qualquer fase
+
+Captura de protocolo real (Log do protocolo, tipo 9) trouxe `kills`/`stages` de 6 criaturas ao mesmo tempo. A fórmula bateu nas 6, sem exceção: **fase N custa `2.500 × (2^N − 1)` abates cumulativos** (2.500 / 7.500 / 17.500 / 37.500 / 77.500 / 157.500...) — cada fase dobra o incremento da anterior. Tortoise com 85.334 abates cai exatamente entre a fase 5 (77.500) e a fase 6 (157.500), e o `stages` do próprio protocolo confirma fase 5.
+
+Substitui o piso "só fase 1" das versões `.7`/`.8` (que existia por cautela, sem confirmação pra fases maiores) — agora a fase real é calculada certa pra qualquer alvo configurado na escada, não só o 1.
+
 ## 0.13.0-bestiary.12 — 2026-09-23 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
