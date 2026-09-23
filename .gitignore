@@ -4,3 +4,7 @@ dist-novo/
 dist_electron/
 *.log
 .DS_Store
+# v0.13.0-fix — captura de investigação (log de protocolo/baseline/DOM),
+# salva pelo app direto na pasta do projeto em dev (ver main.js,
+# diag:saveToProject) pra o Claude ler sem precisar de anexo manual.
+logs/

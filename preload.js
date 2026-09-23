@@ -69,6 +69,9 @@ contextBridge.exposeInMainWorld("hunteraFarm", {
   // IndexedDB), pra quando um reload comum não resolve o jogo travado
   // carregando com um bundle velho.
   hardReloadAccount: (partition) => ipcRenderer.invoke("webview:hardReload", partition),
+  // v0.13.0-fix — salva um log/print de investigação direto na pasta
+  // `logs/` do projeto (só funciona em desenvolvimento — ver main.js).
+  saveDiagToProject: (filename, content) => ipcRenderer.invoke("diag:saveToProject", { filename, content }),
   // v0.12.3 — janela minimizada/restaurada. Com a janela escondida nem a conta
   // selecionada está sendo vista, e aí o freio de render vale pra todas.
   onAppVisibilityChanged: (callback) => {

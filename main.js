@@ -1141,6 +1141,34 @@ ipcMain.handle("webview:hardReload", async (_event, partition) => {
   }
 });
 
+// ---------- logs de investigação DENTRO do projeto (v0.13.0-fix) ----------
+//
+// André pediu: em vez de baixar cada log/print manualmente pra depois
+// anexar aqui na conversa, salvar direto numa pasta do projeto que eu já
+// consigo ler sozinho. Só funciona em desenvolvimento (`!app.isPackaged`):
+// num build instalado, `app.getAppPath()` aponta pra dentro do pacote
+// (asar), não pra um lugar sensato pra escrever — e essa feature é
+// exclusivamente de investigação, não faz sentido existir fora daqui.
+// Nome de arquivo é sempre saneado (sem `..`/separador) e fica preso dentro
+// de `logs/`, mesmo que o renderer mande algo inesperado.
+const LOGS_DIR = path.join(app.getAppPath(), "logs");
+ipcMain.handle("diag:saveToProject", async (_event, { filename, content } = {}) => {
+  if (app.isPackaged) return { ok: false, motivo: "build instalado — só salva em desenvolvimento" };
+  if (typeof filename !== "string" || !filename || typeof content !== "string") {
+    return { ok: false, motivo: "filename/content inválidos" };
+  }
+  const nomeSeguro = path.basename(filename).replace(/[^\w.-]+/g, "-");
+  if (!nomeSeguro) return { ok: false, motivo: "nome de arquivo vazio depois de sanear" };
+  try {
+    await fs.mkdir(LOGS_DIR, { recursive: true });
+    const destino = path.join(LOGS_DIR, nomeSeguro);
+    await fs.writeFile(destino, content, "utf8");
+    return { ok: true, caminho: destino };
+  } catch (err) {
+    return { ok: false, motivo: (err && err.message) || String(err) };
+  }
+});
+
 // ---------- atualização automática (v0.6.0) ----------
 //
 // André queria compartilhar o app com um amigo sem precisar ficar mandando

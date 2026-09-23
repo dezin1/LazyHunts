@@ -296,6 +296,16 @@ try {
   }).catch(() => {});
 } catch (err) {}
 
+// v0.13.0-fix — além do download de sempre, tenta salvar direto na pasta
+// `logs/` do projeto (silencioso: só funciona em dev, ver main.js) — é o
+// que deixa o Claude ler o arquivo sozinho, sem precisar que o André
+// baixe e anexe na conversa toda vez.
+function salvarNaPastaDoProjetoSeDer(filename, content) {
+  try {
+    window.hunteraFarm.saveDiagToProject(filename, content).catch(() => {});
+  } catch (err) {}
+}
+
 function baixarDiagnostico(tab, pacote) {
   if (!pacote) return;
   try {
@@ -304,13 +314,16 @@ function baixarDiagnostico(tab, pacote) {
     // e isso atrapalhou o diagnóstico de verdade. Quem sabe a versão real é o
     // renderer, então é ele que carimba.
     if (versaoDoApp) pacote.versao = versaoDoApp;
-    const blob = new Blob([JSON.stringify(pacote, null, 2)], { type: "application/json" });
+    const json = JSON.stringify(pacote, null, 2);
+    const quem = (pacote.personagem || tab.label || "conta").replace(/[^\w.-]+/g, "-");
+    const carimbo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const nome = `swag-proto-${quem}-${carimbo}.json`;
+    salvarNaPastaDoProjetoSeDer(nome, json);
+    const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    const quem = (pacote.personagem || tab.label || "conta").replace(/[^\w.-]+/g, "-");
-    const carimbo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    a.download = `swag-proto-${quem}-${carimbo}.json`;
+    a.download = nome;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -335,13 +348,42 @@ async function baixarBaseline(tab, pacote) {
     // A leitura já existente do Electron entra no mesmo artefato para que o
     // baseline de DOM/WS e CPU/RAM seja comparável por conta.
     pacote.cpuRam = await window.hunteraFarm.getPerfMetrics(mapaDeContasParaMedicao()).catch(() => null);
-    const blob = new Blob([JSON.stringify(pacote, null, 2)], { type: "application/json" });
+    const json = JSON.stringify(pacote, null, 2);
+    const quem = (tab.label || "conta").replace(/[^\w.-]+/g, "-");
+    const carimbo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const nome = `swag-baseline-${quem}-${carimbo}.json`;
+    salvarNaPastaDoProjetoSeDer(nome, json);
+    const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    const quem = (tab.label || "conta").replace(/[^\w.-]+/g, "-");
+    a.download = nome;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (err) {}
+}
+
+// v0.13.0-fix — mesma ideia do diagnóstico de protocolo, mas pra DOM: uma
+// foto do HTML relevante NO MOMENTO em que foi pedido (não dá pra "gravar"
+// uma árvore que muda a cada frame, só fotografar). Salva na pasta do
+// projeto (dev) e também baixa, mesmo padrão dos outros dois diagnósticos.
+function salvarSnapshotDom(tab, pacote) {
+  if (!pacote) return;
+  try {
+    const html = String(pacote.html || "");
+    const cabecalho = `<!--\nSnapshot de DOM — Swag\ngerado: ${pacote.gerado}\npersonagem: ${pacote.personagem}\nurl: ${pacote.url}\ncapturado: ${pacote.capturado}\ntruncado: ${pacote.truncado}\nbytes: ${pacote.bytes}\n-->\n`;
+    const conteudo = cabecalho + html;
+    const quem = (pacote.personagem || tab.label || "conta").replace(/[^\w.-]+/g, "-");
     const carimbo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    a.download = `swag-baseline-${quem}-${carimbo}.json`;
+    const nome = `swag-dom-${quem}-${carimbo}.html`;
+    salvarNaPastaDoProjetoSeDer(nome, conteudo);
+    const blob = new Blob([conteudo], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nome;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -466,6 +508,11 @@ function ensureWebview(tab) {
     }
     if (e.channel === "hm:perf") {
       baixarBaseline(tab, (e.args && e.args[0]) || null);
+      return;
+    }
+    // v0.13.0-fix — foto do DOM sob demanda (botão "Capturar tela do jogo").
+    if (e.channel === "hm:domSnapshot") {
+      salvarSnapshotDom(tab, (e.args && e.args[0]) || null);
       return;
     }
     if (e.channel === "hm:render-brake") {
@@ -1746,6 +1793,25 @@ if (diagDownloadBtn) {
   diagDownloadBtn.addEventListener("click", () => {
     const tabId = contaDoDiagnostico();
     if (tabId) sendAutomationCommand(tabId, { type: "diagDump" });
+  });
+}
+
+// v0.13.0-fix — botão único, sem toggle: captura na hora, não precisa
+// "ligar" nada antes (diferente do log do protocolo, que acumula ao longo
+// do tempo).
+const domSnapshotBtn = document.getElementById("domSnapshotBtn");
+const domSnapshotStatus = document.getElementById("domSnapshotStatus");
+if (domSnapshotBtn) {
+  domSnapshotBtn.addEventListener("click", () => {
+    const tabId = contaDoDiagnostico();
+    if (!tabId) {
+      if (domSnapshotStatus) domSnapshotStatus.textContent = "Selecione uma conta no painel de automação primeiro.";
+      return;
+    }
+    const enviado = sendAutomationCommand(tabId, { type: "domSnapshot" });
+    if (domSnapshotStatus) {
+      domSnapshotStatus.textContent = enviado ? "Capturado — veja a pasta logs/ do projeto (ou o download)." : "Conta ainda não está pronta.";
+    }
   });
 }
 

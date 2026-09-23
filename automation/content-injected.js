@@ -2328,6 +2328,51 @@
     };
   }
 
+  // v0.13.0-fix — captura sob demanda do DOM. Diferente do log do
+  // protocolo (uma sequência de eventos, dá pra gravar do início ao fim),
+  // o DOM é uma árvore que só faz sentido "agora" — não existe "o log do
+  // DOM". Isto tira uma foto do HTML relevante no INSTANTE em que é pedido:
+  // prioriza a janela de caçadas (`.hunt-window`) se estiver aberta, porque
+  // foi o que motivou essa feature (a tela "Como você quer caçar?"/lista de
+  // caçadas mudando de estrutura numa atualização do jogo, sem o André ter
+  // DevTools pra inspecionar); cai pro `<body>` inteiro se nenhuma janela
+  // conhecida estiver aberta. Corta em alguns MB pelo mesmo motivo do
+  // `diag` (`DIAG_AMOSTRA_INTEIRA` acima) — nunca devolve payload sem teto.
+  const DOM_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024;
+  function capturarSnapshotDom() {
+    let alvo = null;
+    let origem = "document.body (nenhuma janela conhecida aberta)";
+    try {
+      const huntWin = document.querySelector(SEL.huntWindow);
+      if (huntWin && isVisible(huntWin)) {
+        alvo = huntWin;
+        origem = "SEL.huntWindow (.hunt-window)";
+      }
+    } catch (err) {}
+    if (!alvo) alvo = document.body;
+    let html = "";
+    let truncado = false;
+    try {
+      html = alvo.outerHTML || "";
+      if (html.length > DOM_SNAPSHOT_MAX_BYTES) {
+        html = html.slice(0, DOM_SNAPSHOT_MAX_BYTES);
+        truncado = true;
+      }
+    } catch (err) {
+      html = `<!-- falhou ao capturar: ${(err && err.message) || err} -->`;
+    }
+    return {
+      gerado: new Date().toISOString(),
+      origem: "swag",
+      personagem: getActiveCharacterName(),
+      url: String(location.href || ""),
+      capturado: origem,
+      truncado,
+      bytes: html.length,
+      html,
+    };
+  }
+
   function ganchoNaPaginaInstalado() {
     try {
       const raiz = document.documentElement;
@@ -7620,6 +7665,9 @@
         // O pacote pode ter megabytes — vai por sendToHost, que é o mesmo
         // canal do estado, mas SÓ quando pedido.
         sendToHost("hm:diag", diagPacote());
+        break;
+      case "domSnapshot":
+        sendToHost("hm:domSnapshot", capturarSnapshotDom());
         break;
       case "perfStart":
         perfLigar(true);

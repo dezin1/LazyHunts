@@ -542,6 +542,18 @@
               <button type="button" class="diagBtn" id="diagDownloadBtn" disabled>Baixar o log</button>
             </section>
 
+            <!-- v0.13.0-fix — foto do DOM da conta selecionada, sob demanda.
+                 Complementa o log do protocolo: aquele mostra o que o
+                 SERVIDOR manda, este mostra a TELA como está agora (útil
+                 quando o jogo muda alguma interface e a automação para de
+                 achar um botão/seletor). -->
+            <section class="automationSection automationGroup">
+              <h4 class="automationGroupTitle">Capturar tela do jogo</h4>
+              <p class="fieldHint">Salva o HTML da janela aberta agora (ex.: seletor de caçadas) na <b>conta selecionada</b> — pra investigar quando alguma tela muda e a automação para de achar algo nela.</p>
+              <button type="button" class="diagBtn" id="domSnapshotBtn">Capturar tela do jogo</button>
+              <p class="fieldHint" id="domSnapshotStatus"></p>
+            </section>
+
             <!-- v0.11.36 — André: "nada que diga como que a gente faz as coisas
                  deveria estar visível. no layout para o usuário precisa ser bem
                  clean". O detector de spawn seco mostrava ritmo de lote, tiles

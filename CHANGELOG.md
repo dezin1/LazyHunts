@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.0-bestiary.10 — 2026-09-22 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Nova ferramenta de investigação: logs direto na pasta do projeto
+
+André sugeriu: em vez de baixar cada log/print e anexar na conversa toda vez, salvar direto numa pasta que já pode ser lida sem esse vai-e-vem. Só funciona em desenvolvimento (`npm start`, nunca num build instalado):
+
+- **Log do protocolo** e **Baseline de performance** (já existiam) agora também salvam em `logs/` na raiz do projeto, além do download de sempre.
+- **Nova: "Capturar tela do jogo"** (Configurações → Caçada) — tira uma foto do HTML da janela aberta na conta selecionada (prioriza o seletor de caçadas, se estiver aberto) e salva do mesmo jeito. É a ferramenta que teria resolvido mais rápido as investigações desta sessão (tela "Como você quer caçar?", seletor de tier) sem precisar de print/descrição.
+
+`logs/` entrou no `.gitignore` — é captura de investigação, não código.
+
 ## 0.13.0-bestiary.9 — 2026-09-22 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
