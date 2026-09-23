@@ -4177,19 +4177,38 @@
     return /(^|\s)(disabled|is-disabled|locked|blocked)(\s|$)/.test(b.className || "");
   }
 
-  function findPullTier(win, pullLevel) {
+  // v0.13.0-fix — MESMO DEFEITO DO v0.11.29, GENERALIZADO. Aquela correção
+  // resolveu só o caso "tier mais difícil" casando por POSIÇÃO em vez de
+  // nome. André confirmou ao vivo (2 capturas de DOM) que o nome do tier
+  // NÃO é fixo entre caçadas — "Issavi Steppe" usa Agressivo/Suicida/
+  // Hardcore (3 tiers), "Catacombs" usa Ousado/Agressivo/Suicida/Hardcore
+  // (4 tiers). Um tier salvo como "Reckless"/"Suicida"/qualquer nome nunca
+  // vai casar em toda caçada — só nas que por coincidência usam esse rótulo.
+  // O que É estável (confirmado desde o v0.11.29): a ORDEM, mais fácil
+  // primeiro, tanto no protocolo (`guild.cacadas[].tiers`, comentário no
+  // topo do arquivo) quanto na tela. Quando o nome não bate em nenhum
+  // botão, acha a POSIÇÃO do tier salvo dentro da lista do protocolo pra
+  // essa caçada específica, e usa essa mesma posição nos botões da tela.
+  function indicePullLevelNoProtocolo(huntName, pullLevel) {
+    if (!huntName || !pullLevel || pullLevel === TIER_MAIS_DIFICIL) return -1;
+    const h = guild.cacadas.find((x) => x && x.name === huntName);
+    const nomes = h && Array.isArray(h.tiers) ? h.tiers.map((t) => t && t.name) : [];
+    return nomes.findIndex((n) => String(n || "").toLowerCase() === String(pullLevel).toLowerCase());
+  }
+
+  function findPullTier(win, pullLevel, huntName) {
     const todos = Array.from(win.querySelectorAll(SEL.huntTiers));
     const tiers = todos.filter((b) => !tierBloqueado(b));
     if (!tiers.length) return null;
     if (pullLevel === TIER_MAIS_DIFICIL) return tiers[tiers.length - 1];
-    return (
-      tiers.find((b) => b.textContent.trim().toLowerCase() === String(pullLevel || "").toLowerCase()) ||
-      null
-    );
+    const porNome = tiers.find((b) => b.textContent.trim().toLowerCase() === String(pullLevel || "").toLowerCase());
+    if (porNome) return porNome;
+    const indice = indicePullLevelNoProtocolo(huntName, pullLevel);
+    return indice >= 0 && indice < tiers.length ? tiers[indice] : null;
   }
 
-  async function selectPullTier(win, pullLevel) {
-    const match = findPullTier(win, pullLevel);
+  async function selectPullTier(win, pullLevel, huntName) {
+    const match = findPullTier(win, pullLevel, huntName);
     if (!match) return false;
     await humanClick(match);
     return match.textContent.trim() || true;
@@ -4285,7 +4304,7 @@
     await humanClick(entry);
 
     await waitFor(() => win.querySelector(SEL.huntTiers), 4000);
-    const tierFound = await selectPullTier(win, pullLevel);
+    const tierFound = await selectPullTier(win, pullLevel, huntName);
     // v0.11.29 — dizer QUAL tier entrou, não só que entrou. Foi a falta disso
     // que deixou "entrou no mais fácil" passar despercebido.
     if (tierFound && typeof tierFound === "string") {

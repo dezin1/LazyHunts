@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0-bestiary.12 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Correção: nome do tier não é fixo entre caçadas — casamento por posição
+
+André confirmou com duas capturas de DOM: o rótulo do "Tamanho do pull" varia por caçada, tanto no texto quanto na quantidade — "Issavi Steppe" tem 3 tiers (Agressivo/Suicida/Hardcore), "Catacombs" tem 4 (Ousado/Agressivo/Suicida/Hardcore). Um tier salvo com um nome nunca ia casar em toda caçada, só nas que por coincidência usassem aquele rótulo — mesma classe de defeito que o v0.11.29 já tinha corrigido, mas só pro caso especial de "tier mais difícil".
+
+Generalizado: quando o nome salvo não bate com nenhum botão da tela, `findPullTier` agora acha a **posição** desse tier na lista do protocolo (`guild.cacadas[].tiers`, ordem confirmada mais-fácil-primeiro) e usa essa mesma posição nos botões da tela — independe do rótulo mudar de caçada pra caçada.
+
 ## 0.13.0-bestiary.11 — 2026-09-22 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
