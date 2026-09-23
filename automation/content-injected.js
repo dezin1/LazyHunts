@@ -1586,7 +1586,7 @@
   // calculada, que era o único uso dele na época. Agora ele é a ÚNICA fonte de
   // `bestiaryClass`, que é o que faz a expedição "Giants" saber quais criaturas
   // contam. Custa um parse de ~224 KB uma vez por login.
-  const TIPOS_ESCUTADOS = new Set(["9", "15", "18", "21", "26", "30", "33", "41", "42", "51", "54", "55", "57", "60", "71", "72", "77", "92", "103"]);
+  const TIPOS_ESCUTADOS = new Set(["9", "15", "18", "21", "26", "30", "33", "41", "42", "51", "54", "55", "57", "60", "71", "72", "77", "92", "103", "152"]);
 
   function spawnLerMensagem(texto) {
     // Formato: [tipo, payload]. Filtra ANTES do JSON.parse — isto roda muito
@@ -1745,6 +1745,30 @@
     }
     if (tipo === "33" || tipo === "42") {
       guildLerMensagem(tipo, p);
+      return;
+    }
+    if (tipo === "152") {
+      // v0.13.0-fix — MORTE DO PERSONAGEM, com detalhe exato do servidor.
+      // Achado ao vivo em 23/09/2026 (captura de protocolo, conta
+      // Kinazinho): `{diedAt, killer, penalty:{freeBless, lostItems,
+      // lostLevels, blessingsSpent, lostExperience}, hasFilm}`. Não existia
+      // NENHUM jeito de detectar morte via protocolo até aqui — o app não
+      // sabia distinguir "morreu" de qualquer outro motivo de voltar pra
+      // cidade. Só notifica (não muda nenhum comportamento da automação —
+      // isso é decisão futura, separada).
+      const killer = typeof p.killer === "string" && p.killer ? p.killer : "algo desconhecido";
+      const pen = p.penalty || {};
+      const partes = [];
+      if (Number(pen.lostExperience) > 0) partes.push(`${Number(pen.lostExperience).toLocaleString("pt-BR")} de XP`);
+      if (Number(pen.lostLevels) > 0) partes.push(`${pen.lostLevels} nível${pen.lostLevels > 1 ? "eis" : ""}`);
+      if (Number(pen.blessingsSpent) > 0) partes.push(`${pen.blessingsSpent} bênção${pen.blessingsSpent > 1 ? "s" : ""} gasta${pen.blessingsSpent > 1 ? "s" : ""}`);
+      if (Array.isArray(pen.lostItems) && pen.lostItems.length) partes.push(`${pen.lostItems.length} item(ns) perdido(s)`);
+      const detalhe = pen.freeBless
+        ? "morte protegida (sem perda — dentro do período de bênção grátis)."
+        : partes.length
+          ? `perdeu ${partes.join(", ")}.`
+          : "sem detalhe de perda no protocolo.";
+      log(`Você morreu para "${killer}" — ${detalhe}`, true);
       return;
     }
     if (tipo === "26") {

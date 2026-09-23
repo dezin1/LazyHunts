@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.0-bestiary.15 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Nova notificação: morte do personagem (tipo 152)
+
+Achado no log de protocolo do dia 23/09: o tipo 152 traz o relatório exato de morte (`killer`, XP/níveis/bênçãos perdidos, itens perdidos) — algo que o app não tinha NENHUM jeito de detectar até agora. Toda morte agora vira uma notificação (histórico + Telegram, se configurado): "Você morreu para 'X' — perdeu Y de XP, Z bênçãos gastas." Só notifica — não muda nenhum comportamento da automação.
+
 ## 0.13.0-bestiary.14 — 2026-09-23 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
