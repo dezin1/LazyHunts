@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.1-perf.1 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Novo ciclo — performance/webview (o Bestiary fechou na 0.13.0).
+
+### Correção: freio de renderização não pegava na hora ao reabrir o app
+
+André: o freio "não parecia estar salvando". Ele salva certinho (`localStorage`), mas só era **reaplicado de verdade** pela reconciliação periódica de 30s, ou por um evento de visibilidade/troca de aba — restaurar o checkbox sozinho não manda nenhum comando pro webview. Numa sessão reaberta com o freio já ligado, as contas continuavam a 60fps por até 30 segundos antes de o freio pegar de verdade. Agora aplica imediatamente, na inicialização, se já estava ligado.
+
 ## 0.13.0 — 2026-09-23
 
 Fecha o ciclo do Auto Bestiary (17 prévias de teste, `0.13.0-bestiary.1` a `.17`). Resumo do que muda de verdade pra quem usa:

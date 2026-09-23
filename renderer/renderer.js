@@ -3117,6 +3117,14 @@ function iniciarFreioDeRender() {
       renderRenderBrakeStatus();
     });
   }
+  // v0.13.1-fix — André: o freio "não parecia estar salvando". Ele salva
+  // certinho (localStorage), mas antes disto só era REAPLICADO de verdade
+  // pela reconciliação de 30s lá embaixo, ou por um evento de
+  // visibilidade/troca de aba — restaurar `toggle.checked` sozinho não
+  // manda nenhum comando pro webview. Numa sessão restaurada com o freio
+  // já ligado, as contas continuavam a 60fps por até 30s antes de o freio
+  // pegar de verdade. Aplica na hora, se já estava ligado.
+  if (freioLigado()) aplicarFreioDeRender();
 
   try {
     window.hunteraFarm.onAppVisibilityChanged((visivel) => {
