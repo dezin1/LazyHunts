@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0-bestiary.5 — 2026-09-22 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Correção: "Mapear" travava dentro da caçada, só avançava com voltar manual
+
+André confirmou ao vivo: depois do fix da `.4`, o mapeamento entrava numa caçada pra ler o tier e **não voltava sozinho** pra próxima — só avançava se ele clicasse em voltar na tela, na mão. Causa: clicar numa entrada da lista passou a **navegar pra uma tela de detalhes** que troca a lista/busca de lugar, em vez de só mostrar os tiers por cima dela (era assim que o código antigo, e o comentário original, assumiam).
+
+Em vez de caçar um botão "voltar" novo (arriscado — já foram 2 seletores que quebraram nesta mesma investigação), a varredura agora **fecha e reabre a janela inteira do seletor antes de cada caçada** (menos a primeira, já aberta) — o mesmo fluxo comprovado que já inicia caçadas de verdade (`pickAndStartHunt`).
+
 ## 0.13.0-bestiary.4 — 2026-09-22 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.

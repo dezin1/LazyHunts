@@ -7084,8 +7084,8 @@
     const alreadyOpen = !!queryVisible(document, SEL.huntWindow);
     const opened = await ensureHuntWindowOpen();
     if (!opened) throw new Error("Não consegui abrir o seletor de caçadas.");
-    const win = document.querySelector(SEL.huntWindow);
-    const search = win.querySelector(SEL.huntSearchInput);
+    let win = document.querySelector(SEL.huntWindow);
+    let search = win.querySelector(SEL.huntSearchInput);
     if (search) setInputValue(search, "");
     await sleep(300);
 
@@ -7107,7 +7107,30 @@
     let failed = 0;
     let diagTiersJaLogado = false;
     for (const name of names) {
-      // CORREÇÃO — antes confiava que a lista inteira (busca vazia) ficava
+      // CORREÇÃO (2) — André confirmou ao vivo: depois de entrar numa
+      // caçada pra ler o tier, a varredura "não voltava" sozinha — só
+      // avançava pra a próxima se ele clicasse em voltar na mão. Ou seja:
+      // clicar numa entrada agora NAVEGA pra uma tela de detalhes que troca
+      // a lista/busca de lugar, em vez de só mostrar os tiers por cima dela
+      // como antes (comentário antigo de `scrapeFullCatalog`, agora
+      // desatualizado). Em vez de caçar um botão "voltar" novo — frágil do
+      // mesmo jeito que os outros seletores que já quebraram nesta mesma
+      // investigação —, fecha e reabre a janela inteira antes de CADA
+      // caçada (menos a primeira, já aberta): o mesmo fluxo comprovado que
+      // `pickAndStartHunt` usa pra iniciar uma caçada de verdade.
+      if (done + failed > 0) {
+        await closeHuntWindow();
+        const reaberto = await ensureHuntWindowOpen();
+        if (!reaberto) {
+          failed++;
+          continue;
+        }
+        win = document.querySelector(SEL.huntWindow);
+        search = win.querySelector(SEL.huntSearchInput);
+        if (search) setInputValue(search, "");
+        await sleep(300);
+      }
+      // CORREÇÃO (1) — antes confiava que a lista inteira (busca vazia) ficava
       // renderizada do início ao fim da varredura e só reconsultava
       // `findHuntEntry` na hora de clicar. Diagnóstico ao vivo (22/09)
       // confirmou que isso quebra no meio: uma lista grande pode não manter
