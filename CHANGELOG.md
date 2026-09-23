@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.13.0 — 2026-09-23
+
+Fecha o ciclo do Auto Bestiary (17 prévias de teste, `0.13.0-bestiary.1` a `.17`). Resumo do que muda de verdade pra quem usa:
+
+### Auto Bestiary por caçada — feature nova
+
+Escada de prioridade configurável: escolha as caçadas, a criatura de referência de cada uma, o tier e até qual fase ir — a automação caça cada uma até bater o alvo e passa pra próxima sozinha. Suporta acompanhar **duas criaturas da mesma caçada ao mesmo tempo** (cada uma com seu próprio alvo, só avança pra outra caçada quando as duas fecharem) e mostra a **fase real**, calculada a partir dos abates (fórmula `2.500 × (2^N − 1)` confirmada em 6 criaturas diferentes) — não só a partir do evento ao vivo do jogo, que não cobre progresso de sessões anteriores.
+
+### Correção de uma atualização do jogo, no meio do caminho
+
+O Huntera mudou a tela de seleção de caçadas (nova etapa "Como você quer caçar?" antes da lista) e passou a usar rótulos de tier diferentes por caçada — isso quebrou a Caçada normal, a Expedição e o próprio Bestiary ao mesmo tempo. Corrigido na raiz: navegação pela nova tela e casamento de tier por posição (não mais por nome), então futuras mudanças de rótulo não quebram de novo.
+
+### Ferramentas novas de investigação
+
+"Log do protocolo" e "Capturar tela" (jogo e app) agora salvam direto numa pasta `logs/` do projeto em desenvolvimento — sem precisar baixar e anexar manualmente pra investigar um problema.
+
+### Outras correções
+
+- "Recarregar sem cache" — quando o jogo trava carregando e o reload comum não resolve.
+- Notificação de morte do personagem (quem matou, XP/bênçãos perdidas).
+- Status do painel não mostra mais "sem bot" com o Bestiário ativo.
+
 ## 0.13.0-bestiary.17 — 2026-09-23 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
