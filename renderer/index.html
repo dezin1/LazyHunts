@@ -552,6 +552,14 @@
               <p class="fieldHint">Salva o HTML da janela aberta agora (ex.: seletor de caçadas) na <b>conta selecionada</b> — pra investigar quando alguma tela muda e a automação para de achar algo nela.</p>
               <button type="button" class="diagBtn" id="domSnapshotBtn">Capturar tela do jogo</button>
               <p class="fieldHint" id="domSnapshotStatus"></p>
+              <!-- v0.13.0-fix — mesma ideia, mas pro APP em si (barra
+                   lateral/painel), não pro webview do jogo — o snapshot
+                   acima roda dentro do content-injected.js (só vê a página
+                   do jogo); um bug visual na barra lateral (ex.: "Minha
+                   escada") precisa do HTML do lado de cá, que o renderer.js
+                   já tem direto, sem IPC nenhum. -->
+              <button type="button" class="diagBtn" id="appSnapshotBtn">Capturar tela do app (barra lateral)</button>
+              <p class="fieldHint" id="appSnapshotStatus"></p>
             </section>
 
             <!-- v0.11.36 — André: "nada que diga como que a gente faz as coisas

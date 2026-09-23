@@ -1264,12 +1264,20 @@ function trocarCriaturaReferencia(hunt, criatura) {
 // `entradaDaCacada`) sempre acharia a PRIMEIRA ocorrência — clicar no
 // stepper da SEGUNDA linha mexeria silenciosamente na primeira, na linha
 // errada. Índice é exatamente o que checkbox/mover/remover já usavam.
+// v0.13.0-fix — André: "se o personagem já tem o monstro na fase 5, não
+// deveria deixar voltar a fase 4 ou menor". Configurar um alvo já
+// ultrapassado não é só confuso — marca a entrada como concluída no
+// próximo tick (fase atual >= alvo), então o piso do stepper agora
+// acompanha a fase JÁ alcançada (`faseAtual`, calculada pelos abates em
+// `sendState`), nunca deixando escolher um alvo abaixo do que já foi feito.
 function ajustarFaseAlvo(index, delta) {
   if (!selectedAutomationTabId || !Number.isInteger(index) || index < 0) return;
   const atual = automationState.get(selectedAutomationTabId) || {};
   const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
-  if (!itensAtuais[index]) return;
-  const novaFase = Math.max(1, (Number(itensAtuais[index].faseAlvo) || 1) + delta);
+  const item = itensAtuais[index];
+  if (!item) return;
+  const piso = Math.max(1, Number(item.faseAtual) || 0);
+  const novaFase = Math.max(piso, (Number(item.faseAlvo) || 1) + delta);
   const novo = itensAtuais.map((it, i) => (i === index ? { ...it, faseAlvo: novaFase } : it));
   enviarBestiaryLadder(novo);
 }
@@ -1593,7 +1601,7 @@ function renderBestiaryLadder(state) {
       </div>
       <div class="bestiaryLadderRowActions">
         <div class="bestiaryLadderStepper" role="group" aria-label="Nível-alvo de ${escapeHtml(huntLabel)}">
-          <button type="button" data-ladder-fase-down="${i}" aria-label="Diminuir nível-alvo"${faseAlvo <= 1 ? " disabled" : ""}>−</button>
+          <button type="button" data-ladder-fase-down="${i}" aria-label="Diminuir nível-alvo"${faseAlvo <= Math.max(1, faseAtual) ? " disabled" : ""}>−</button>
           <span class="bestiaryLadderStepperValue">${faseAlvo}</span>
           <button type="button" data-ladder-fase-up="${i}" aria-label="Aumentar nível-alvo">+</button>
         </div>
@@ -1811,6 +1819,39 @@ if (domSnapshotBtn) {
     const enviado = sendAutomationCommand(tabId, { type: "domSnapshot" });
     if (domSnapshotStatus) {
       domSnapshotStatus.textContent = enviado ? "Capturado — veja a pasta logs/ do projeto (ou o download)." : "Conta ainda não está pronta.";
+    }
+  });
+}
+
+// v0.13.0-fix — o snapshot acima roda dentro do content-injected.js, que só
+// enxerga a página do JOGO (webview). Um bug visual na barra lateral do
+// próprio app (ex.: "Minha escada" do Bestiário) precisa do HTML deste
+// lado — que o renderer.js já tem direto no `document`, sem IPC/webview
+// nenhum no meio.
+const appSnapshotBtn = document.getElementById("appSnapshotBtn");
+const appSnapshotStatus = document.getElementById("appSnapshotStatus");
+if (appSnapshotBtn) {
+  appSnapshotBtn.addEventListener("click", () => {
+    try {
+      const alvo = document.getElementById("sidebar") || document.body;
+      const html = alvo.outerHTML || "";
+      const cabecalho = `<!--\nSnapshot do APP (barra lateral) — Swag\ngerado: ${new Date().toISOString()}\nversao: ${versaoDoApp || "?"}\n-->\n`;
+      const conteudo = cabecalho + html;
+      const carimbo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const nome = `swag-app-sidebar-${carimbo}.html`;
+      salvarNaPastaDoProjetoSeDer(nome, conteudo);
+      const blob = new Blob([conteudo], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = nome;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      if (appSnapshotStatus) appSnapshotStatus.textContent = "Capturado — veja a pasta logs/ do projeto (ou o download).";
+    } catch (err) {
+      if (appSnapshotStatus) appSnapshotStatus.textContent = `Falhou: ${(err && err.message) || err}`;
     }
   });
 }

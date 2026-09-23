@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0-bestiary.14 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Correção: alvo da escada podia ser configurado abaixo da fase já alcançada
+
+André: "se o personagem já tem o monstro na fase 5, não deveria deixar voltar a fase 4 ou menor". Configurar um alvo já ultrapassado marca a entrada como concluída no próximo tick sem aviso — confuso e fácil de fazer sem querer no stepper. O botão "−" do alvo agora trava na fase JÁ alcançada (calculada pelos abates), nunca deixando escolher algo abaixo do que já foi feito.
+
+### Nova ferramenta: "Capturar tela do app" (barra lateral)
+
+O "Capturar tela do jogo" (`.10`) só vê a página do JOGO (roda dentro do webview) — um bug visual na barra lateral do próprio app (ex.: elemento estranho perto do checkbox "concluída" na escada do Bestiário, ainda não identificado) fica fora do alcance dele. Novo botão ao lado, mesma seção — captura o HTML da barra lateral direto do `renderer.js` (sem IPC/webview no meio) e salva do mesmo jeito em `logs/`.
+
 ## 0.13.0-bestiary.13 — 2026-09-23 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
