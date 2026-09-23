@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0-bestiary.16 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Correção: piso do alvo era a fase atual, e deveria ser fase atual + 1
+
+André corrigiu a própria correção da `.14`: se a criatura já está na fase 2, o alvo mínimo não é 2 (já alcançado, sem sentido como objetivo) — é **3**, a próxima fase ainda não alcançada. `ajustarFaseAlvo()` e o botão "−" agora travam em `faseAtual + 1`, não em `faseAtual`.
+
+### Nova opção: acompanhar duas criaturas da MESMA caçada ao mesmo tempo
+
+André: quer configurar duas criaturas de uma caçada (ex.: Mutated Bat e Mutated Tiger de "Mutated Cave"), cada uma com seu próprio alvo, e só avançar pra uma caçada **diferente** quando as duas fecharem. O modal "Adicionar caçadas" só deixava **trocar** a referência de uma caçada já adicionada — nunca adicionar uma segunda. O modelo de dados já suportava isso (é o mesmo "duplicata legada" que o app já tolera, sem nenhuma regra de conclusão agregada nova); faltava só o botão. Agora, quando uma criatura de uma caçada já-adicionada ainda não é referência de nenhuma entrada, aparecem dois botões: "Usar esta" (troca a referência existente) e "+ Também" (cria uma segunda entrada, independente).
+
 ## 0.13.0-bestiary.15 — 2026-09-23 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.

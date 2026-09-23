@@ -350,6 +350,40 @@ const giantEntry2 = itens.find((it) => it.hunt === "Giant Lair");
 assert(giantEntry2 && giantEntry2.criatura === "Cyclops", "referência de Giant Lair agora é Cyclops");
 assert(giantEntry2.faseAlvo === 1 && giantEntry2.concluido === false, "trocar referência não mexeu em faseAlvo/concluido");
 
+// Cenário 2c — v0.13.0-fix: André quer acompanhar DUAS criaturas da MESMA
+// caçada (cada uma com seu próprio alvo/prioridade), não só trocar qual é a
+// referência única. Giant Lair já tem Cyclops como referência (cenário
+// 2b) — precisa existir um "+ Também" pra Behemoth que cria uma SEGUNDA
+// entrada, sem mexer na primeira.
+sandbox.automationState.set("conta-1", estadoComLadder(itens));
+enviosBestiaryLadder.length = 0;
+run('renderBestiaryCatalogo(automationState.get("conta-1"));');
+const botaoTambemBehemoth = elementosFalsos.bestiaryCatalogoLista._elementos.find(
+  (el) => el.tagName === "BUTTON" && el.getAttribute("data-add-hunt") === "Giant Lair" && el.getAttribute("data-add-criatura") === "Behemoth"
+);
+assert(!!botaoTambemBehemoth, "existe botão '+ Também' pra acompanhar Behemoth JUNTO com Cyclops em Giant Lair");
+botaoTambemBehemoth.disparar("click");
+itens = itensDoUltimoEnvio();
+assert(itens.length === 3, `escada tem 3 entradas agora (Rat Cellars + Giant Lair×2) — recebido: ${itens.length}`);
+const giantEntries = itens.filter((it) => it.hunt === "Giant Lair");
+assert(giantEntries.length === 2, `Giant Lair tem 2 entradas — recebido: ${giantEntries.length}`);
+assert(
+  giantEntries.some((it) => it.criatura === "Cyclops") && giantEntries.some((it) => it.criatura === "Behemoth"),
+  "as duas entradas de Giant Lair têm criaturas de referência diferentes (Cyclops e Behemoth)"
+);
+assert(
+  giantEntries.every((it) => it.faseAlvo === 1 && it.concluido === false),
+  "a nova entrada (Behemoth) nasce com faseAlvo 1 e não concluída, igual a qualquer entrada nova — não herda nada da entrada irmã"
+);
+
+sandbox.automationState.set("conta-1", estadoComLadder(itens));
+enviosBestiaryLadder.length = 0;
+run('renderBestiaryCatalogo(automationState.get("conta-1"));');
+const chipsGiantLair = elementosFalsos.bestiaryCatalogoLista._elementos.filter(
+  (el) => el.getAttribute && el.getAttribute("data-add-criatura") === "Behemoth"
+);
+assert(chipsGiantLair.length === 0, "com as 2 entradas já criadas, Behemoth não mostra mais nenhum botão de ação (chip vira 'acompanhando')");
+
 // Cenário 3 — nível selecionado é persistido (stepper em "Minha escada").
 // TASK-003-R2.1 — `ajustarFaseAlvo` passou a ser por ÍNDICE (não por
 // `hunt`): "Rat Cellars" está no índice 0 desta lista (`itens[0]`).

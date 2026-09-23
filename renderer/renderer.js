@@ -1223,11 +1223,21 @@ function tierValidoParaHunt(state, hunt, tier) {
 // (sempre um valor real de `h.tiers`, nunca digitado). Sem tier (chamada
 // antiga, ou catálogo sem tiers mapeados pra essa caçada), a entrada nasce
 // sem o campo — cai no fallback de `cfg.pullLevel` em runtime.
+// v0.13.0-fix — André: quer acompanhar DUAS criaturas da mesma caçada, cada
+// uma com seu próprio alvo, e só pular pra uma caçada DIFERENTE quando as
+// duas fecharem. Isso já funciona hoje com duas entradas na escada
+// compartilhando a mesma `hunt` (é o mesmo "duplicata legada" que o app já
+// tolera — cada entrada continua decidida por UMA criatura de referência,
+// sem regra de conclusão agregada nova) — só faltava a modal deixar CRIAR
+// essa segunda entrada de propósito. Antes bloqueava por `hunt` sozinho
+// (`entradaDaCacada`); agora só bloqueia duplicata EXATA (mesma hunt E
+// mesma criatura já configuradas) — duas criaturas diferentes da mesma
+// caçada viram duas entradas, cada uma na sua posição/prioridade própria.
 function adicionarCacadaNaEscada(hunt, criatura, tier) {
   if (!selectedAutomationTabId || !hunt || !criatura) return;
   const atual = automationState.get(selectedAutomationTabId) || {};
   const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
-  if (entradaDaCacada(itensAtuais, hunt)) return;
+  if (itensAtuais.some((it) => it && it.hunt === hunt && it.criatura === criatura)) return;
   const novoItem = { hunt, criatura, faseAlvo: 1, concluido: false };
   const tierValido = tierValidoParaHunt(atual, hunt, typeof tier === "string" ? tier.trim() : "");
   if (tierValido) novoItem.tier = tierValido;
@@ -1267,16 +1277,17 @@ function trocarCriaturaReferencia(hunt, criatura) {
 // v0.13.0-fix — André: "se o personagem já tem o monstro na fase 5, não
 // deveria deixar voltar a fase 4 ou menor". Configurar um alvo já
 // ultrapassado não é só confuso — marca a entrada como concluída no
-// próximo tick (fase atual >= alvo), então o piso do stepper agora
-// acompanha a fase JÁ alcançada (`faseAtual`, calculada pelos abates em
-// `sendState`), nunca deixando escolher um alvo abaixo do que já foi feito.
+// próximo tick (fase atual >= alvo). Correção do André: o piso não é a fase
+// JÁ alcançada, é ela **+1** — alvo igual à fase atual também não faz
+// sentido (a criatura já está lá, não é mais um objetivo a alcançar). O
+// piso do stepper é sempre a PRÓXIMA fase ainda não alcançada.
 function ajustarFaseAlvo(index, delta) {
   if (!selectedAutomationTabId || !Number.isInteger(index) || index < 0) return;
   const atual = automationState.get(selectedAutomationTabId) || {};
   const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
   const item = itensAtuais[index];
   if (!item) return;
-  const piso = Math.max(1, Number(item.faseAtual) || 0);
+  const piso = Math.max(1, (Number(item.faseAtual) || 0) + 1);
   const novaFase = Math.max(piso, (Number(item.faseAlvo) || 1) + delta);
   const novo = itensAtuais.map((it, i) => (i === index ? { ...it, faseAlvo: novaFase } : it));
   enviarBestiaryLadder(novo);
@@ -1426,6 +1437,11 @@ function renderBestiaryCatalogo(state) {
   bestiaryCatalogoListaEl.innerHTML = filtrado
     .map((h) => {
       const entrada = entradaDaCacada(itensLadder, h.hunt);
+      // v0.13.0-fix — todas as entradas desta hunt (pode ser mais de uma —
+      // ver adicionarCacadaNaEscada), pra saber POR CRIATURA se ela já é
+      // referência de alguma entrada (mostra "acompanhando"), em vez de só
+      // checar a primeira encontrada.
+      const entradasDaHunt = itensLadder.filter((it) => it && it.hunt === h.hunt);
       // TASK-003-R2.3 — padrão pedido: o nível global da aba Caçada, SE ele
       // existir entre os tiers reais desta hunt; senão o primeiro tier do
       // catálogo (ordem do jogo, do mais fácil). Nunca um valor inventado —
@@ -1443,16 +1459,26 @@ function renderBestiaryCatalogo(state) {
       const criaturasHtml = h.criaturas.length
         ? h.criaturas
             .map((c) => {
-              const ehReferencia = !!entrada && entrada.criatura === c;
+              // v0.13.0-fix — referência é por CRIATURA agora (pode haver
+              // mais de uma entrada pra mesma hunt), não só "é a criatura da
+              // primeira entrada encontrada".
+              const jaEhReferenciaDeAlguma = entradasDaHunt.some((it) => it.criatura === c);
               let acaoHtml;
-              if (!entrada) {
-                acaoHtml = `<button type="button" class="bestiaryCreatureAddBtn" data-add-hunt="${escapeHtml(h.hunt)}" data-add-criatura="${escapeHtml(c)}">Adicionar</button>`;
-              } else if (ehReferencia) {
+              if (jaEhReferenciaDeAlguma) {
                 acaoHtml = '<span class="bestiaryCreatureRefTag">acompanhando</span>';
+              } else if (!entradasDaHunt.length) {
+                acaoHtml = `<button type="button" class="bestiaryCreatureAddBtn" data-add-hunt="${escapeHtml(h.hunt)}" data-add-criatura="${escapeHtml(c)}">Adicionar</button>`;
               } else {
-                acaoHtml = `<button type="button" class="bestiaryCreatureSwitchBtn" data-switch-hunt="${escapeHtml(h.hunt)}" data-switch-criatura="${escapeHtml(c)}">Usar esta</button>`;
+                // Já existe pelo menos uma entrada desta hunt, com OUTRA
+                // criatura de referência: "Usar esta" TROCA a referência da
+                // entrada existente (comportamento de sempre); "+ Também"
+                // CRIA uma segunda entrada, pra acompanhar as duas ao mesmo
+                // tempo — só pula pra uma caçada DIFERENTE quando ambas
+                // fecharem.
+                acaoHtml = `<button type="button" class="bestiaryCreatureSwitchBtn" data-switch-hunt="${escapeHtml(h.hunt)}" data-switch-criatura="${escapeHtml(c)}">Usar esta</button>
+                <button type="button" class="bestiaryCreatureAddBtn" data-add-hunt="${escapeHtml(h.hunt)}" data-add-criatura="${escapeHtml(c)}" title="Acompanha esta criatura TAMBÉM, numa segunda entrada — só avança pra outra caçada quando as duas fecharem">+ Também</button>`;
               }
-              return `<span class="bestiaryCreatureChip${ehReferencia ? " bestiaryCreatureChipNaEscada" : ""}">
+              return `<span class="bestiaryCreatureChip${jaEhReferenciaDeAlguma ? " bestiaryCreatureChipNaEscada" : ""}">
                 ${escapeHtml(c)}
                 ${acaoHtml}
               </span>`;
@@ -1601,7 +1627,7 @@ function renderBestiaryLadder(state) {
       </div>
       <div class="bestiaryLadderRowActions">
         <div class="bestiaryLadderStepper" role="group" aria-label="Nível-alvo de ${escapeHtml(huntLabel)}">
-          <button type="button" data-ladder-fase-down="${i}" aria-label="Diminuir nível-alvo"${faseAlvo <= Math.max(1, faseAtual) ? " disabled" : ""}>−</button>
+          <button type="button" data-ladder-fase-down="${i}" aria-label="Diminuir nível-alvo"${faseAlvo <= Math.max(1, faseAtual + 1) ? " disabled" : ""}>−</button>
           <span class="bestiaryLadderStepperValue">${faseAlvo}</span>
           <button type="button" data-ladder-fase-up="${i}" aria-label="Aumentar nível-alvo">+</button>
         </div>
