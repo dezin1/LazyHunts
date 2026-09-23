@@ -855,12 +855,22 @@
   // têm confirmação nenhuma pra criatura genérica (só uma amostra, Adult
   // Goanna, com 5.000/10.000 incrementais) — inventar aqui seria chutar
   // exatamente o que o projeto decidiu nunca fazer com número de jogo.
-  function bestiaryLadderFaseAtual(item) {
-    const chave = nomeParaChaveBestiario((item && item.criatura) || (item && item.hunt));
+  // Único lugar que decide "fase atual" de uma CHAVE já normalizada — usado
+  // tanto pela decisão de avanço da escada (`bestiaryLadderFaseAtual`
+  // abaixo) quanto pelo `sendState()` que alimenta a tela (antes duplicava
+  // essa conta direto com `economia.bestiarioFases.get(...) || 0`, sem
+  // passar pelo piso dos 2.500 abates — por isso a tela continuava
+  // mostrando "Fase 0" mesmo depois desta correção existir).
+  function faseAtualPorChave(chave) {
     const porEvento = economia.bestiarioFases.get(chave) || 0;
     const abates = economia.bestiario.get(chave) || 0;
     const porAbatesFase1 = abates >= 2500 ? 1 : 0;
     return Math.max(porEvento, porAbatesFase1);
+  }
+
+  function bestiaryLadderFaseAtual(item) {
+    const chave = nomeParaChaveBestiario((item && item.criatura) || (item && item.hunt));
+    return faseAtualPorChave(chave);
   }
 
   // Nome da caçada que o Ladder quer rodar agora — é o que entra no lugar
@@ -3330,13 +3340,13 @@
             return {
               nome,
               referencia: nome === (it.criatura || it.hunt),
-              faseAtual: economia.bestiarioFases.get(chaveNome) || 0,
+              faseAtual: faseAtualPorChave(chaveNome),
               abatesAtuais: economia.bestiario.get(chaveNome) ?? null,
             };
           });
           return {
             ...it,
-            faseAtual: economia.bestiarioFases.get(chave) || 0,
+            faseAtual: faseAtualPorChave(chave),
             abatesAtuais: economia.bestiario.get(chave) ?? null,
             criaturas,
           };
@@ -4016,11 +4026,25 @@
   // testados nessa ordem porque o link é mais específico. `button`, `a` e
   // `[role="button"]` cobrem os jeitos mais comuns de um card ser clicável.
   function encontrarBotaoOrganizarCacada(win) {
-    const candidatos = Array.from(win.querySelectorAll("button, a, [role='button']"));
+    // v0.13.0-fix — a v1 desta função só procurava em `button`/`a`/
+    // `[role="button"]` e não achava nada: André confirmou ao vivo (print)
+    // que a tela "Como você quer caçar?" continuava travada mesmo depois da
+    // correção. O card provavelmente é um `<div>` comum com clique do
+    // Angular, sem nenhuma dessas marcações semânticas. Em vez de adivinhar
+    // mais uma tag, busca por TEXTO em QUALQUER elemento folha (sem filhos —
+    // pra pegar o nó mais específico, não um container gigante) e clica
+    // nele: `el.click()` dispara um evento de verdade que sobe (bubbling)
+    // até qualquer ancestral que esteja de fato escutando, então não
+    // importa em qual elemento o Angular pendurou o handler.
+    const normalizar = (s) => String(s || "").replace(/\s+/g, " ").trim();
+    const folhas = Array.from(win.querySelectorAll("*")).filter((el) => el.children.length === 0);
+    const porTextoExato = (texto) => folhas.find((el) => normalizar(el.textContent) === texto);
+    const porTextoComeca = (texto) => folhas.find((el) => normalizar(el.textContent).startsWith(texto));
     return (
-      candidatos.find((el) => el.textContent && el.textContent.trim() === "Explorar caçadas") ||
-      candidatos.find((el) => el.textContent && el.textContent.trim().startsWith("Explorar caçadas")) ||
-      candidatos.find((el) => el.textContent && el.textContent.trim() === "Organizar caçada") ||
+      porTextoExato("Explorar caçadas") ||
+      porTextoComeca("Explorar caçadas") ||
+      porTextoExato("Organizar caçada") ||
+      porTextoComeca("Organizar caçada") ||
       null
     );
   }

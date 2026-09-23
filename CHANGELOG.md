@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.13.0-bestiary.9 — 2026-09-22 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Correção: "Como você quer caçar?" continuava travado depois da `.6`
+
+André confirmou com print: a busca do botão "Organizar caçada"/"Explorar caçadas" só olhava dentro de `button`/`a`/`[role="button"]`, e o card provavelmente é um `<div>` comum com clique do Angular, sem nenhuma dessas marcações. Agora a busca é por TEXTO em qualquer elemento folha da tela, e clica nele — o clique sobe (bubbling) até quem estiver de fato escutando, então não depende de adivinhar a tag certa.
+
+## 0.13.0-bestiary.8 — 2026-09-22 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Correção: a tela ainda mostrava "Fase 0" depois da correção da `.7`
+
+André confirmou com print ao vivo: mesmo na `.7`, "Tortoise Shore" (85,3k abates) continuava mostrando "Fase 0 → alvo 1". Causa: o piso de 2.500 abates só tinha sido aplicado em `bestiaryLadderFaseAtual()` (usada pela decisão de avanço da escada) — o `sendState()` que alimenta a tela calculava a fase de novo, direto, duplicado, sem passar pela correção.
+
+Consolidado num único lugar (`faseAtualPorChave()`), usado tanto pela decisão de avanço quanto pelo estado enviado à tela — agora os dois concordam.
+
 ## 0.13.0-bestiary.7 — 2026-09-22 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
