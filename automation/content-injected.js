@@ -3984,17 +3984,58 @@
     );
   }
 
+  // CORREÇÃO (3) — o jogo passou a mostrar uma tela intermediária ("Como
+  // você quer caçar?" — cards "Organizar caçada"/"Encontrar time") ANTES da
+  // lista de caçadas de sempre, dentro do MESMO modal `.hunt-window`.
+  // André mandou print confirmando: as duas telas têm a cara do mesmo modal
+  // (mesmo título "Caçadas", mesmo X de fechar), só o conteúdo de dentro
+  // muda. Isso explica a raiz de tudo que vínhamos corrigindo nesta
+  // investigação: `queryVisible(document, SEL.huntWindow)` fica verdadeiro
+  // em QUALQUER uma das duas telas, mas `SEL.huntSearchInput` só existe
+  // depois de clicar em "Organizar caçada" — daí a lista vindo vazia, os
+  // tiers não sendo lidos, etc.
+  //
+  // Sem inspeção de DOM ao vivo (André sem acesso a DevTools), procura por
+  // TEXTO em vez de classe CSS nova: tanto o link "Explorar caçadas →" de
+  // dentro do card quanto o título "Organizar caçada" do card inteiro,
+  // testados nessa ordem porque o link é mais específico. `button`, `a` e
+  // `[role="button"]` cobrem os jeitos mais comuns de um card ser clicável.
+  function encontrarBotaoOrganizarCacada(win) {
+    const candidatos = Array.from(win.querySelectorAll("button, a, [role='button']"));
+    return (
+      candidatos.find((el) => el.textContent && el.textContent.trim() === "Explorar caçadas") ||
+      candidatos.find((el) => el.textContent && el.textContent.trim().startsWith("Explorar caçadas")) ||
+      candidatos.find((el) => el.textContent && el.textContent.trim() === "Organizar caçada") ||
+      null
+    );
+  }
+
+  // Garante que o modal `.hunt-window`, já aberto, está na tela da LISTA
+  // (com busca) — clica em "Organizar caçada" se ainda estiver na tela de
+  // escolha de modo. Idempotente: se a busca já existe, não faz nada.
+  async function garantirListaDeCacadas() {
+    const win = document.querySelector(SEL.huntWindow);
+    if (!win) return false;
+    if (win.querySelector(SEL.huntSearchInput)) return true;
+    const btn = await waitFor(() => encontrarBotaoOrganizarCacada(win), 4000);
+    if (!btn) return false;
+    await humanClick(btn);
+    return !!(await waitFor(() => win.querySelector(SEL.huntSearchInput), 4000));
+  }
+
   async function ensureHuntWindowOpen() {
-    if (queryVisible(document, SEL.huntWindow)) return true;
-    // O script roda quase assim que a página começa a carregar — bem antes
-    // da SPA em Angular do jogo terminar de montar a barra de navegação (ou
-    // até antes do login acontecer, se a conta ainda não estava logada).
-    // Por isso espera de verdade o botão aparecer em vez de checar só uma
-    // vez — cobre tanto "ainda carregando" quanto "acabou de logar agora".
-    const openBtn = await waitFor(() => getHuntPickerOpenButton(), 20000);
-    if (!openBtn) return false;
-    await humanClick(openBtn);
-    return !!(await waitFor(() => queryVisible(document, SEL.huntWindow), 4000));
+    if (!queryVisible(document, SEL.huntWindow)) {
+      // O script roda quase assim que a página começa a carregar — bem antes
+      // da SPA em Angular do jogo terminar de montar a barra de navegação (ou
+      // até antes do login acontecer, se a conta ainda não estava logada).
+      // Por isso espera de verdade o botão aparecer em vez de checar só uma
+      // vez — cobre tanto "ainda carregando" quanto "acabou de logar agora".
+      const openBtn = await waitFor(() => getHuntPickerOpenButton(), 20000);
+      if (!openBtn) return false;
+      await humanClick(openBtn);
+      if (!(await waitFor(() => queryVisible(document, SEL.huntWindow), 4000))) return false;
+    }
+    return await garantirListaDeCacadas();
   }
 
   function findHuntEntry(win, huntName) {
@@ -7080,7 +7121,38 @@
     }
   }
 
+  // v0.13.0-fix — André perguntou o óbvio que a gente devia ter feito desde
+  // o início: o catálogo INTEIRO (nomes + tiers, na ordem do jogo) já vem
+  // pronto pelo protocolo (tipo 42 → `guild.cacadas`, ver comentário na
+  // declaração de `guild` no topo do arquivo). Não tem porquê abrir o
+  // seletor e clicar em dezenas de caçadas uma por uma — isso é o que
+  // vínhamos corrigindo aos poucos (lista que perde entrada no meio, tela
+  // de "Organizar caçada" no caminho, etc.) — quando o servidor já manda
+  // tudo isso pronto, sem precisar abrir janela nenhuma. Só usa o sweep de
+  // DOM (mais abaixo) como FALLBACK, pro caso raro de o tipo 42 ainda não
+  // ter chegado nesta sessão (ex.: logou agora mesmo).
+  function catalogoCompletoViaProtocolo() {
+    if (!Array.isArray(guild.cacadas) || !guild.cacadas.length) return null;
+    const names = [];
+    const tiersByHunt = {};
+    for (const h of guild.cacadas) {
+      if (!h || typeof h.name !== "string" || !h.name) continue;
+      names.push(h.name);
+      const tiers = Array.isArray(h.tiers) ? h.tiers.map((t) => t && t.name).filter(Boolean) : [];
+      if (tiers.length) tiersByHunt[h.name] = tiers;
+    }
+    if (!names.length) return null;
+    return { names, tiersByHunt, failed: names.length - Object.keys(tiersByHunt).length };
+  }
+
   async function scrapeFullCatalog() {
+    const viaProtocolo = catalogoCompletoViaProtocolo();
+    if (viaProtocolo) {
+      saveHuntCatalogNames(viaProtocolo.names);
+      for (const [name, tiers] of Object.entries(viaProtocolo.tiersByHunt)) saveHuntCatalogTiers(name, tiers);
+      return viaProtocolo;
+    }
+
     const alreadyOpen = !!queryVisible(document, SEL.huntWindow);
     const opened = await ensureHuntWindowOpen();
     if (!opened) throw new Error("Não consegui abrir o seletor de caçadas.");
@@ -7187,7 +7259,12 @@
     isBusy = true;
     catalogSweepRequested = true;
     try {
-      log("Mapeando o catálogo completo de caçadas (nomes + tamanhos de pull)... isso leva um ou dois minutos.");
+      const viaProtocolo = !!catalogoCompletoViaProtocolo();
+      log(
+        viaProtocolo
+          ? "Mapeando o catálogo completo de caçadas — já veio pronto pelo protocolo do jogo, sem precisar abrir nada."
+          : "Mapeando o catálogo completo de caçadas (nomes + tamanhos de pull)... isso leva um ou dois minutos."
+      );
       sendState({ catalogSweeping: true });
       const { names, tiersByHunt, failed } = await scrapeFullCatalog();
       const mapped = Object.keys(tiersByHunt).length;

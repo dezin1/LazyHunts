@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0-bestiary.6 — 2026-09-22 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Causa raiz encontrada: tela nova "Como você quer caçar?" antes da lista
+
+André mandou print: o jogo passou a mostrar uma tela intermediária (cards "Organizar caçada" / "Encontrar time") antes da lista de caçadas de sempre, dentro do MESMO modal `.hunt-window` — por isso tudo que vínhamos corrigindo nesta investigação (lista perdendo entrada no meio, tier não lido) tinha essa causa em comum: o código achava o modal aberto e já tentava usar a busca, que só existe depois de escolher "Organizar caçada". Corrigido no ponto único (`ensureHuntWindowOpen`) usado por TODOS os fluxos que abrem esse seletor — mapeamento, tier avulso, e iniciar uma caçada normal.
+
+### Simplificação: usar o protocolo em vez de clicar em cada caçada
+
+André perguntou o óbvio: o catálogo inteiro (nomes + tiers) já vem pronto pelo protocolo do jogo (tipo 42) — não precisava abrir o seletor e clicar em dezenas de caçadas uma por uma. O "Mapear catálogo completo" agora usa esses dados diretamente quando já chegaram nesta sessão (instantâneo, sem abrir nada), e só cai pro clique manual (agora corrigido) como fallback, pro caso raro de o tipo 42 ainda não ter chegado.
+
 ## 0.13.0-bestiary.5 — 2026-09-22 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
