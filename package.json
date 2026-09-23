@@ -1,6 +1,6 @@
 {
   "name": "huntera-multiconta",
-  "version": "0.13.0-bestiary.16",
+  "version": "0.13.0-bestiary.17",
   "description": "App desktop (Electron) não-oficial pra manter várias contas do Huntera logadas em paralelo, cada uma isolada, numa janela só. Projeto de aprendizado — inspirado no HunteraFarm (descontinuado), reescrito do zero.",
   "private": true,
   "main": "main.js",

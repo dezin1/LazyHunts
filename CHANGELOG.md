@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.0-bestiary.17 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Correção: topo do painel mostrava "Caçando (sem bot)" com o Bestiário ativo
+
+André: o status precisa refletir o que está acontecendo agora — e com o Bestiário caçando de verdade, o topo dizia "Caçando (sem bot)", como se nenhuma automação estivesse no controle. Causa: `acctStatusFor()` só olhava `running` (o motor da Caçada normal) pra decidir "tem bot ou não" — como Caçada normal e Bestiário são mutuamente exclusivos, `running` sempre vem `false` quando é o Bestiário quem está no comando, caindo direto no ramo de "sem bot" sem nunca chegar no `status` real (que o content-injected.js já manda certo, ex.: "Caçando (Auto Bestiary)"). Corrigido considerando o Bestiário ativo como "tem bot" também.
+
 ## 0.13.0-bestiary.16 — 2026-09-23 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.

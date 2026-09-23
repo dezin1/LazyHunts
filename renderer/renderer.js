@@ -653,12 +653,24 @@ function vocationBadge(state) {
 // mesma coisa. Agora o personagem vem primeiro — se está caçando, está
 // caçando, com ou sem bot. Que a automação está desligada continua visível no
 // ícone de raio da linha, que é justamente pra isso.
+// v0.13.0-fix — André: com o Bestiário ativo, o topo do painel mostrava
+// "Caçando (sem bot)" — como se nenhuma automação estivesse no controle.
+// Causa: esta função só olhava `st.running` (o motor da Caçada normal) pra
+// decidir "tem bot ou não"; Caçada normal e Bestiário são mutuamente
+// exclusivos (F1), então `running` sempre vem `false` quando é o Bestiário
+// quem está caçando — caindo direto no ramo de "sem bot" sem nunca chegar
+// no `st.status` (que já tem o texto certo, ex.: "Caçando (Auto
+// Bestiary)", mandado pelo content-injected.js).
+function bestiarioAtivoNoEstado(st) {
+  return !!(st && st.bestiaryLadder && st.bestiaryLadder.enabled);
+}
+
 function acctStatusFor(tabId) {
   if (!loadedTabs.has(tabId)) return { text: "carregando…", cls: "" };
   const st = automationState.get(tabId);
   if (!st || !guestReady.has(tabId)) return { text: "carregando…", cls: "" };
   if (st.status === "Erro") return { text: "Erro", cls: "err" };
-  if (!st.running) {
+  if (!st.running && !bestiarioAtivoNoEstado(st)) {
     if (!st.characterName) return { text: "Fora do jogo", cls: "" };
     if (st.hunting) return { text: "Caçando (sem bot)", cls: "on" };
     // v0.11.8 — treinar roda sem a automação ligada, então precisa aparecer
