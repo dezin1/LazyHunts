@@ -4071,16 +4071,15 @@
   // testados nessa ordem porque o link é mais específico. `button`, `a` e
   // `[role="button"]` cobrem os jeitos mais comuns de um card ser clicável.
   function encontrarBotaoOrganizarCacada(win) {
-    // v0.13.0-fix — a v1 desta função só procurava em `button`/`a`/
-    // `[role="button"]` e não achava nada: André confirmou ao vivo (print)
-    // que a tela "Como você quer caçar?" continuava travada mesmo depois da
-    // correção. O card provavelmente é um `<div>` comum com clique do
-    // Angular, sem nenhuma dessas marcações semânticas. Em vez de adivinhar
-    // mais uma tag, busca por TEXTO em QUALQUER elemento folha (sem filhos —
-    // pra pegar o nó mais específico, não um container gigante) e clica
-    // nele: `el.click()` dispara um evento de verdade que sobe (bubbling)
-    // até qualquer ancestral que esteja de fato escutando, então não
-    // importa em qual elemento o Angular pendurou o handler.
+    // v0.13.0-fix — CONFIRMADO ao vivo com snapshot de DOM real (22/09/2026,
+    // ver "Capturar tela do jogo"): o card é um botão de verdade —
+    // `<button id="hunt-organize" aria-label="Organizar caçada">` — só não
+    // tinha sido achado porque a v1 desta função nem chegava a rodar (ver
+    // motivo em `garantirListaDeCacadas`). Usa o id direto (muito mais
+    // estável que texto), com a busca por texto como fallback pra sobreviver
+    // a uma eventual troca de id no futuro.
+    const porId = win.querySelector("#hunt-organize");
+    if (porId) return porId;
     const normalizar = (s) => String(s || "").replace(/\s+/g, " ").trim();
     const folhas = Array.from(win.querySelectorAll("*")).filter((el) => el.children.length === 0);
     const porTextoExato = (texto) => folhas.find((el) => normalizar(el.textContent) === texto);
@@ -4096,15 +4095,24 @@
 
   // Garante que o modal `.hunt-window`, já aberto, está na tela da LISTA
   // (com busca) — clica em "Organizar caçada" se ainda estiver na tela de
-  // escolha de modo. Idempotente: se a busca já existe, não faz nada.
+  // escolha de modo. Idempotente: se a busca já está VISÍVEL, não faz nada.
+  //
+  // CORREÇÃO — usava `win.querySelector(SEL.huntSearchInput)`, que sempre
+  // achava o `<input>` mesmo na tela "Como você quer caçar?": confirmado ao
+  // vivo por snapshot de DOM que o Angular do jogo mantém a busca/lista
+  // SEMPRE no HTML, só escondendo com `hidden` num container pai quando não
+  // é a tela ativa. `querySelector` não liga pra `hidden`/CSS — só
+  // `queryVisible` (via `isVisible`, que já trata isso) diz de verdade se a
+  // tela certa está na frente agora. Sem essa troca, esta função sempre
+  // devolvia "já está na lista" e nunca chegava a clicar em nada.
   async function garantirListaDeCacadas() {
     const win = document.querySelector(SEL.huntWindow);
     if (!win) return false;
-    if (win.querySelector(SEL.huntSearchInput)) return true;
+    if (queryVisible(win, SEL.huntSearchInput)) return true;
     const btn = await waitFor(() => encontrarBotaoOrganizarCacada(win), 4000);
     if (!btn) return false;
     await humanClick(btn);
-    return !!(await waitFor(() => win.querySelector(SEL.huntSearchInput), 4000));
+    return !!(await waitFor(() => queryVisible(win, SEL.huntSearchInput), 4000));
   }
 
   async function ensureHuntWindowOpen() {

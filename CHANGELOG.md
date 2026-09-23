@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0-bestiary.11 — 2026-09-22 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Causa raiz real da tela "Como você quer caçar?" — confirmada por snapshot de DOM
+
+A ferramenta nova ("Capturar tela do jogo") já valeu a pena na primeira captura: o card "Organizar caçada" É um `<button id="hunt-organize">` de verdade — só que a checagem "já está na lista?" (`win.querySelector(SEL.huntSearchInput)`) sempre respondia "sim", mesmo na tela de escolha de modo, porque o Angular do jogo mantém a busca/lista **sempre no HTML**, só escondendo com `hidden` num container pai. `querySelector` não liga pra isso — só `queryVisible` (que já trata `hidden`/CSS) diz de verdade qual tela está na frente. Sem essa troca, a correção nunca chegava a clicar em nada.
+
+Agora usa `#hunt-organize` direto (id estável, confirmado no HTML real) e `queryVisible` em vez de `querySelector` pra decidir se precisa clicar.
+
 ## 0.13.0-bestiary.10 — 2026-09-22 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
