@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0-bestiary.7 — 2026-09-22 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.
+
+### Correção: "Fase 0" mostrado mesmo com dezenas de milhares de abates
+
+Causa raiz documentada hoje (achado em `huntera-automacao/CLAUDE.md`, print real da Cyclopedia do André): o tipo 92 só dispara no EXATO abate que cruza o limiar de uma fase, nesta sessão — uma criatura que já passou da Fase 1 em sessões anteriores nunca gera esse evento de novo, e a escada ficava mostrando "Fase 0" pra sempre.
+
+Confirmado em 4 classes de criatura diferentes: a Fase 1 do Bestiary custa sempre **2.500 abates cumulativos**. Quando não há evento de fase nesta sessão, mas os abates já bateram 2.500, a Fase 1 agora é considerada alcançada. Fases 2/3 **não** são inferidas — os limiares delas ainda não têm confirmação pra criatura genérica.
+
 ## 0.13.0-bestiary.6 — 2026-09-22 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo do Bestiário.

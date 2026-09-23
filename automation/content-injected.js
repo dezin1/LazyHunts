@@ -842,10 +842,25 @@
     return { item: ladder.itens[i], index: i };
   }
 
-  // Maior fase já CONFIRMADA (tipo 92) pra criatura do item, nesta sessão.
+  // v0.13.0-fix — o tipo 92 só dispara no EXATO abate que cruza o limiar de
+  // uma fase, NESTA sessão — uma criatura que já passou da fase 1 em
+  // sessões anteriores nunca gera esse evento de novo, e ficava presa
+  // mostrando "Fase 0" pra sempre mesmo com dezenas de milhares de abates
+  // (achado documentado em huntera-automacao/CLAUDE.md, 22/09/2026, print
+  // real da Cyclopedia do André: Adult Goanna, Manticore, Sphinx, Clomp e
+  // Ogre Sage todos com `killsRequired:2500` pra Fase 1). Como a Fase 1
+  // custa sempre 2.500 abates cumulativos — confirmado em várias classes de
+  // criatura diferentes —, usa isso como PISO quando não há evento de fase
+  // nesta sessão. Fases 2/3 NÃO são inferidas: os limiares delas ainda não
+  // têm confirmação nenhuma pra criatura genérica (só uma amostra, Adult
+  // Goanna, com 5.000/10.000 incrementais) — inventar aqui seria chutar
+  // exatamente o que o projeto decidiu nunca fazer com número de jogo.
   function bestiaryLadderFaseAtual(item) {
     const chave = nomeParaChaveBestiario((item && item.criatura) || (item && item.hunt));
-    return economia.bestiarioFases.get(chave) || 0;
+    const porEvento = economia.bestiarioFases.get(chave) || 0;
+    const abates = economia.bestiario.get(chave) || 0;
+    const porAbatesFase1 = abates >= 2500 ? 1 : 0;
+    return Math.max(porEvento, porAbatesFase1);
   }
 
   // Nome da caçada que o Ladder quer rodar agora — é o que entra no lugar
