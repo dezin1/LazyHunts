@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.6 — 2026-09-25
+
+Republica a 0.13.5 com o instalador consertado. **O código do app é o mesmo da 0.13.5.**
+
+### Correção: o instalador leve da 0.13.5 instalava o app sem arquivos essenciais
+O pacote baixado pelo `LazyHunts-Setup.exe` (`huntera-multiconta-0.13.5-x64.nsis.7z`, no dl.lazyhunts.com e no GitHub) saiu **sem** `chrome_100_percent.pak`, `chrome_200_percent.pak`, `d3dcompiler_47.dll`, `ffmpeg.dll` e `icudtl.dat`. Resultado: depois de instalar (ou atualizar), o app não abria — "ffmpeg.dll não foi encontrado".
+
+Causa: durante a publicação da 0.13.5, um segundo build foi iniciado ao mesmo tempo na mesma pasta de saída (`dist-novo/win-unpacked`). Ele começou limpando a pasta em ordem alfabética e parou no `LazyHunts.exe` (em uso) — os cinco arquivos que vinham antes já tinham sido apagados do build que estava sendo publicado. O zip do GitHub foi gerado antes e ficou completo; o pacote do instalador leve, depois, e saiu incompleto.
+
+Regra que fica: **nunca rodar dois builds do projeto ao mesmo tempo**, e conferir o conteúdo do `.7z` depois de publicar (tem que ter os mesmos arquivos da pasta `win-unpacked`, incluindo `ffmpeg.dll`).
+
+Quem ficou com a 0.13.5 quebrada instalada precisa reinstalar pelo site (o app quebrado não abre para se atualizar sozinho).
+
 ## 0.13.5 — 2026-09-25
 
 Fecha o ciclo `lazyhunts` (prévias `0.13.5-lazyhunts.1` a `.3`, abaixo). Resumo do que muda para quem usa:
