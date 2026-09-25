@@ -72,6 +72,9 @@ contextBridge.exposeInMainWorld("hunteraFarm", {
   // v0.13.0-fix — salva um log/print de investigação direto na pasta
   // `logs/` do projeto (só funciona em desenvolvimento — ver main.js).
   saveDiagToProject: (filename, content) => ipcRenderer.invoke("diag:saveToProject", { filename, content }),
+  // v0.13.4 — acrescenta um pedaço ao log do protocolo em gravação contínua
+  // (só desenvolvimento, ver main.js).
+  appendDiagToProject: (filename, content) => ipcRenderer.invoke("diag:appendToProject", { filename, content }),
   // v0.12.3 — janela minimizada/restaurada. Com a janela escondida nem a conta
   // selecionada está sendo vista, e aí o freio de render vale pra todas.
   onAppVisibilityChanged: (callback) => {

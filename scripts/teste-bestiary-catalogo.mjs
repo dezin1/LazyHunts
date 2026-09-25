@@ -191,9 +191,25 @@ const documentHandlers = {}; // document.addEventListener("keydown", ...) — pr
 // elementos falsos vêm de dentro de `getElementById`, nunca como
 // propriedade pré-setada no sandbox (bug já corrigido numa rodada anterior
 // deste mesmo teste).
+// TASK-UI-06 — o botão Iniciar/Pausar saiu de dentro de #bestiaryControl e
+// virou um elemento ESTÁTICO do cabeçalho (#bestiaryToggleBtn): o render só
+// muda className/innerHTML/disabled/onclick dele em vez de recriar um botão.
+function fakeBotaoDeAcao() {
+  return {
+    className: "",
+    innerHTML: "",
+    disabled: false,
+    onclick: null,
+    disparar(tipo) {
+      if (this.disabled) return; // igual a um <button disabled> real
+      if (tipo === "click" && typeof this.onclick === "function") this.onclick();
+    },
+  };
+}
 const bestiaryModalCardFake = fakeBotaoOuOverlay();
 const elementosFalsos = {
   bestiaryControl: fakeContainer(),
+  bestiaryToggleBtn: fakeBotaoDeAcao(),
   bestiaryLadderLista: fakeContainer(),
   bestiaryLadderResumo: fakeTexto(),
   bestiaryAddHuntsBtn: fakeBotaoOuOverlay(),
@@ -437,11 +453,56 @@ assert(enviosBestiaryLadder.length === 0, "trocar referência pra uma criatura v
 // PARTE 2 — controle explícito Iniciar/Pausar (fonte única de verdade)
 // ============================================================
 
+// Cenário 5b — TASK-UI-09: o alvo da entrada NOVA nasce em faseAtual+1 (não
+// mais travado em 1). O catálogo manda `criaturasProgresso` já calculado.
+{
+  const catalogoComProgresso = [
+    {
+      hunt: "Giant Lair",
+      criaturas: ["Behemoth", "Cyclops"],
+      criaturasProgresso: [
+        { nome: "Behemoth", faseAtual: 3, abatesAtuais: 20000 },
+        { nome: "Cyclops", faseAtual: 0, abatesAtuais: 157 },
+      ],
+      tiers: ["Tier 3"],
+      forca: 500,
+    },
+    { hunt: "Rat Cellars", criaturas: ["Rat"], criaturasProgresso: [{ nome: "Rat", faseAtual: 1, abatesAtuais: 5700 }], tiers: ["Tier 1"], forca: 10 },
+    // catálogo antigo/sem progresso: cai em fase 0 → alvo 1, nunca quebra.
+    { hunt: "Sand Sharpie", criaturas: ["Piranha"], tiers: ["Cautious"], forca: 50 },
+  ];
+  const estadoProg = () => ({ bestiaryCatalogo: catalogoComProgresso, bestiaryLadder: { enabled: false, index: 0, itens: [] }, pullLevel: "" });
+
+  sandbox.automationState.set("conta-1", estadoProg());
+  enviosBestiaryLadder.length = 0;
+  run('adicionarCacadaNaEscada("Giant Lair", "Behemoth", "Tier 3");');
+  assert(itensDoUltimoEnvio()[0].faseAlvo === 4, `criatura já na fase 3 entra com alvo 4 (recebido ${itensDoUltimoEnvio()[0].faseAlvo})`);
+
+  sandbox.automationState.set("conta-1", estadoProg());
+  enviosBestiaryLadder.length = 0;
+  run('adicionarCacadaNaEscada("Giant Lair", "Cyclops", "Tier 3");');
+  assert(itensDoUltimoEnvio()[0].faseAlvo === 1, `criatura na fase 0 entra com alvo 1 (recebido ${itensDoUltimoEnvio()[0].faseAlvo})`);
+
+  sandbox.automationState.set("conta-1", estadoProg());
+  enviosBestiaryLadder.length = 0;
+  run('adicionarCacadaNaEscada("Rat Cellars", "Rat", "Tier 1");');
+  assert(itensDoUltimoEnvio()[0].faseAlvo === 2, `criatura na fase 1 (5,7k abates) entra com alvo 2 (recebido ${itensDoUltimoEnvio()[0].faseAlvo})`);
+
+  sandbox.automationState.set("conta-1", estadoProg());
+  enviosBestiaryLadder.length = 0;
+  run('adicionarCacadaNaEscada("Sand Sharpie", "Piranha", "Cautious");');
+  assert(itensDoUltimoEnvio()[0].faseAlvo === 1, "catálogo sem criaturasProgresso: alvo 1, sem quebrar");
+
+  // O piso vale ANTES de criar e o stepper continua respeitando o mesmo piso
+  // depois: faseAlvo nunca nasce abaixo de faseAtual+1.
+  sandbox.automationState.set("conta-1", estadoComLadder([]));
+}
+
 // Cenário 6 — sem itens: botão indisponível, nenhuma config enviada.
 enviosBestiaryLadder.length = 0;
 run('renderBestiaryControl({ bestiaryLadder: { enabled: false, index: 0, itens: [] } });');
-const startVazio = sandbox.document.getElementById("bestiaryStartBtn");
-assert(!!startVazio && startVazio.disabled === true, "sem itens, o botão 'Iniciar Bestiário' existe mas está desabilitado");
+const startVazio = sandbox.document.getElementById("bestiaryToggleBtn");
+assert(!!startVazio && startVazio.disabled === true && startVazio.innerHTML.includes("Iniciar Bestiário"), "sem itens, o botão 'Iniciar Bestiário' existe mas está desabilitado");
 if (startVazio) startVazio.disparar("click");
 assert(enviosBestiaryLadder.length === 0, "clicar no botão desabilitado (sem itens) não envia comando nenhum");
 
@@ -450,8 +511,8 @@ assert(enviosBestiaryLadder.length === 0, "clicar no botão desabilitado (sem it
 const itensParaControle = [{ hunt: "Rat Cellars", criatura: "Rat", faseAlvo: 2, concluido: false }];
 enviosBestiaryLadder.length = 0;
 run(`renderBestiaryControl({ bestiaryLadder: { enabled: false, index: 0, itens: ${JSON.stringify(itensParaControle)} } });`);
-const startBtn = sandbox.document.getElementById("bestiaryStartBtn");
-assert(!!startBtn && startBtn.disabled === false, "com 1 hunt configurada, 'Iniciar Bestiário' aparece habilitado");
+const startBtn = sandbox.document.getElementById("bestiaryToggleBtn");
+assert(!!startBtn && startBtn.disabled === false && startBtn.innerHTML.includes("Iniciar Bestiário"), "com 1 hunt configurada, 'Iniciar Bestiário' aparece habilitado");
 startBtn.disparar("click");
 assert(enviosBestiaryLadder.length === 1, "clicar em Iniciar envia exatamente 1 comando");
 const payloadIniciar = ultimoEnvio().msg.payload.bestiaryLadder;
@@ -464,7 +525,7 @@ enviosBestiaryLadder.length = 0;
 run(`renderBestiaryControl({ bestiaryLadder: { enabled: true, index: 0, indiceAtual: 0, itens: ${JSON.stringify(
   itensParaControle.map((it) => ({ ...it, faseAtual: 1 }))
 )} } });`);
-const pauseBtn = sandbox.document.getElementById("bestiaryPauseBtn");
+const pauseBtn = sandbox.document.getElementById("bestiaryToggleBtn");
 assert(!!pauseBtn, "com enabled:true, o botão vira 'Pausar Bestiário'");
 pauseBtn.disparar("click");
 assert(enviosBestiaryLadder.length === 1, "clicar em Pausar envia exatamente 1 comando");
@@ -505,14 +566,14 @@ function assertAmbasPresentes(itensRecebidos, contexto) {
 // Cenário 10 — Iniciar preserva as duas.
 enviosBestiaryLadder.length = 0;
 run(`renderBestiaryControl({ bestiaryLadder: { enabled: false, index: 0, itens: ${JSON.stringify(duasEntradasLegadas)} } });`);
-sandbox.document.getElementById("bestiaryStartBtn").disparar("click");
+sandbox.document.getElementById("bestiaryToggleBtn").disparar("click");
 assertAmbasPresentes(itensDoUltimoEnvio(), "Iniciar Bestiário");
 assert(ultimoEnvio().msg.payload.bestiaryLadder.enabled === true, "Iniciar ainda manda enabled:true corretamente mesmo com duplicata legada presente");
 
 // Cenário 11 — Pausar preserva as duas.
 enviosBestiaryLadder.length = 0;
 run(`renderBestiaryControl({ bestiaryLadder: { enabled: true, index: 0, indiceAtual: 0, itens: ${JSON.stringify(duasEntradasLegadas)} } });`);
-sandbox.document.getElementById("bestiaryPauseBtn").disparar("click");
+sandbox.document.getElementById("bestiaryToggleBtn").disparar("click");
 assertAmbasPresentes(itensDoUltimoEnvio(), "Pausar Bestiário");
 assert(ultimoEnvio().msg.payload.bestiaryLadder.enabled === false, "Pausar ainda manda enabled:false corretamente mesmo com duplicata legada presente");
 

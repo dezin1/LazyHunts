@@ -1,54 +1,67 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
+/* TASK-UI-06/07 — bug de raiz encontrado ao esconder botões no cabeçalho
+   (automationToggleBtn/bestiaryToggleBtn apareciam os dois juntos, e o
+   "Destacar" continuava visível mesmo com `.hidden = true` via JS): CSS de
+   autor SEMPRE vence o `[hidden]{display:none}` da folha do agente do
+   navegador, não importa a especificidade — então qualquer classe com
+   `display:flex`/`block` (`.autoToggleBtn`, `.detachBtn`, etc.) anula o
+   `hidden` sozinha. Já tinha acontecido antes só com `#botFloat`
+   (`#botFloat[hidden]{display:none}`, comentário próprio ali) — em vez de
+   repetir o patch elemento por elemento pra sempre, esta regra garante que
+   `hidden` funciona em QUALQUER elemento do app, de uma vez por todas. */
+[hidden] { display: none !important; }
 
-/* ---------- tokens (v0.10.0 — identidade "Swag") ----------
-   Tema escuro é o :root. Tema claro sobrescreve via [data-theme="light"]
-   no <html>. Cor de destaque (verdigris/safira/violeta, atributo
-   data-accent mantido como "gold" por compatibilidade com o código
-   existente) via [data-accent] — só troca --accent, os tons derivados
-   (--accent-tint-*) se recalculam sozinhos com color-mix(). Paleta
-   compartilhada com a extensão (huntera-automacao) e o site/PWA. */
+/* ---------- tokens (v0.13.3 — identidade "Grimório") ----------
+   André escolheu essa direção entre 3 propostas (tinta + pergaminho + lacre
+   de cera), depois de achar a paleta anterior ("Swag", v0.10.0, sage green)
+   "seca". Tema escuro é o :root. Tema claro sobrescreve via
+   [data-theme="light"] (adaptação clara/pergaminho ensolarado — não testada
+   tanto quanto o escuro, que é o que o André usa de fato). Cor de destaque
+   (dourado envelhecido; sapphire/violeta continuam como variantes via
+   [data-accent], agora sobre a base Grimório) — só troca --accent, os tons
+   derivados (--accent-tint-*) se recalculam sozinhos com color-mix(). */
 :root {
-  --bg-app: #12140F;
-  --bg-rail: #0D0F0A;
-  --bg-sidebar: #1B1E16;
-  --bg-toolbar: #1B1E16;
-  --bg-button: #242820;
-  --bg-field: #0D0F0A;
-  --bg-inset: #0D0F0A;
-  --bg-hover: #242820;
-  --border-subtle: rgba(233,228,214,0.08);
-  --border-strong: rgba(233,228,214,0.14);
-  --text-primary: #E9E4D6;
-  --text-secondary-strong: #C7C2AF;
-  --text-secondary: #A8A392;
-  --text-muted: #6E6B5E;
-  --accent: #6FA890;
+  --bg-app: #16110B;
+  --bg-rail: #100C07;
+  --bg-sidebar: #1E1710;
+  --bg-toolbar: #1E1710;
+  --bg-button: #2A2013;
+  --bg-field: #16110B;
+  --bg-inset: #16110B;
+  --bg-hover: #2A2013;
+  --border-subtle: rgba(232,222,199,0.08);
+  --border-strong: rgba(232,222,199,0.16);
+  --text-primary: #E8DEC7;
+  --text-secondary-strong: #C7B98F;
+  --text-secondary: #9C8F72;
+  --text-muted: #7A6E56;
+  --accent: #C9A227;
   --accent-tint-solid: color-mix(in srgb, var(--accent) 20%, var(--bg-app));
   --accent-tint-bg: color-mix(in srgb, var(--accent) 22%, transparent);
-  --success: #7CB88F;
-  --danger: #D9695C;
+  --success: #6B8A52;
+  --danger: #A13A3A;
 }
 :root[data-theme="light"] {
-  --bg-app: #EEEBDD;
-  --bg-rail: #E3E0D2;
-  --bg-sidebar: #F6F4E9;
-  --bg-toolbar: #F6F4E9;
-  --bg-button: #F6F4E9;
-  --bg-field: #E9E5D5;
-  --bg-inset: #E3E0D2;
-  --bg-hover: #E9E5D5;
-  --border-subtle: rgba(18,20,15,0.08);
-  --border-strong: rgba(18,20,15,0.16);
-  --text-primary: #12140F;
-  --text-secondary-strong: #3A3B30;
-  --text-secondary: #5B5C4E;
-  --text-muted: #8B8875;
-  --accent: #3F7562;
+  --bg-app: #EFE6D2;
+  --bg-rail: #E3D6B8;
+  --bg-sidebar: #F7F0DE;
+  --bg-toolbar: #F7F0DE;
+  --bg-button: #EFE2C4;
+  --bg-field: #E8DABE;
+  --bg-inset: #E3D6B8;
+  --bg-hover: #EFE2C4;
+  --border-subtle: rgba(40,28,10,0.10);
+  --border-strong: rgba(40,28,10,0.20);
+  --text-primary: #241B10;
+  --text-secondary-strong: #4A3B24;
+  --text-secondary: #6B5A3E;
+  --text-muted: #8C7A5C;
+  --accent: #8A6416;
   --accent-tint-solid: color-mix(in srgb, var(--accent) 15%, #ffffff);
   --accent-tint-bg: color-mix(in srgb, var(--accent) 15%, #ffffff);
-  --success: #2E7D5B;
-  --danger: #B3453A;
+  --success: #4F6B3A;
+  --danger: #7A2C2C;
 }
 :root[data-accent="sapphire"] { --accent: #7C93B8; }
 :root[data-theme="light"][data-accent="sapphire"] { --accent: #4A6FA0; }
@@ -147,27 +160,36 @@ body {
 }
 
 /* ---------- barra lateral (contas) ---------- */
+/* TASK-UI-02 — André: "vamos manter o slider?" — não. A trilha que expandia
+   no hover (v0.9.17) saiu: agora #sidebar é um popover flutuante ancorado
+   na trilha (mesma ideia do #zoomPopover, só que maior), fora do fluxo do
+   flex de #app via position:fixed — abrir/fechar NUNCA redimensiona
+   #mainArea, o jogo fica sempre do mesmo tamanho. Abre só por clique
+   (📌 na trilha, ver railPinBtn em renderer.js), nunca mais sozinho ao
+   passar o mouse. */
 #sidebar {
+  position: fixed;
+  left: 52px;
+  top: 0;
+  bottom: 0;
   width: 250px;
-  flex-shrink: 0;
+  z-index: 60;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border-subtle);
+  box-shadow: 6px 0 28px rgba(0,0,0,0.35);
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  transition: width 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
-}
-/* v0.7.1 — André: "faz um botão hamburguer para recolher o menu". Recolhe
-   pra 0 (não só esconde o conteúdo) — dá a tela inteira pro jogo, útil
-   principalmente no modo grade (⊞), onde as 4 contas já competem por
-   espaço. A trilha de ícones (com o próprio ☰) continua sempre visível,
-   então dá sempre pra abrir de volta, mesmo com o menu recolhido. */
-#app.sidebarCollapsed #sidebar {
-  width: 0;
-  border-right-color: transparent;
+  transform: translateX(-8px);
   opacity: 0;
   pointer-events: none;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+#app:not(.sidebarCollapsed) #sidebar {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 #sidebarHeader {
@@ -189,7 +211,7 @@ body {
   text-overflow: ellipsis;
 }
 .brandMark { flex-shrink: 0; display: block; color: var(--accent); }
-.brandName { overflow: hidden; text-overflow: ellipsis; font-family: "Fraunces", Georgia, serif; font-size: 14px; letter-spacing: 0.01em; }
+.brandName { overflow: hidden; text-overflow: ellipsis; font-family: "Cinzel", Georgia, serif; font-size: 14px; letter-spacing: 0.01em; }
 #addTabBtn {
   width: 24px;
   height: 24px;
@@ -598,7 +620,7 @@ body {
 }
 .automationHeaderText { min-width: 0; }
 .automationTitle {
-  font-family: "Fraunces", Georgia, serif;
+  font-family: "Cinzel", Georgia, serif;
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
@@ -734,10 +756,19 @@ body {
 .autoToggleBtn.off { background: var(--success); color: var(--bg-app); }
 .autoToggleBtn.on { background: var(--danger); color: var(--bg-app); }
 .autoToggleBtn:disabled { opacity: 0.5; cursor: default; }
-/* v0.9.30 — o botão vive dentro do painel da aba Caçada, como primeiro filho:
-   o margin-top de 18px acima era pro layout antigo (colado na barra de abas) e
-   aqui deixava um buraco. Quem separa ele do resto é a borda da seção abaixo. */
-#autoTabPanelCacada > .autoToggleBtn { margin-top: 4px; margin-bottom: 2px; }
+/* TASK-UI-03 — o botão saiu da aba Caçada e mora no automationHeader agora
+   ("ação na cabeça", ver index.html); aqui ele deixa de ser a barra de
+   largura cheia (width:100% acima continua valendo pra outros usos do
+   mesmo componente, ex.: Auto Bestiary) e vira um botão de tamanho normal,
+   encostado no fim da linha do cabeçalho. */
+.automationHeaderText { flex: 1; }
+.automationHeader .autoToggleBtn {
+  width: auto;
+  margin-top: 0;
+  padding: 8px 16px;
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
 
 #automationTabBar,
 #settingsTabBar { margin-top: 16px; }
@@ -1187,10 +1218,9 @@ body {
   border-radius: 50%;
 }
 .accentLabel { font-size: 11px; color: var(--text-muted); margin-right: 2px; }
-.accentSwatch[data-accent="gold"] { background: #6FA890; }
+.accentSwatch[data-accent="gold"] { background: var(--accent); }
 .accentSwatch[data-accent="sapphire"] { background: #7C93B8; }
 .accentSwatch[data-accent="violet"] { background: #A98FC4; }
-:root[data-theme="light"] .accentSwatch[data-accent="gold"] { background: #3F7562; }
 :root[data-theme="light"] .accentSwatch[data-accent="sapphire"] { background: #4A6FA0; }
 :root[data-theme="light"] .accentSwatch[data-accent="violet"] { background: #7A5FA0; }
 
@@ -1381,7 +1411,6 @@ body {
    modal, montado sob demanda (ver renderer.js: `abrirBestiaryModal`). */
 
 .bestiaryControl { display: flex; flex-direction: column; gap: 8px; }
-.bestiaryControl > .autoToggleBtn { margin-top: 0; }
 .bestiaryControlHint { margin: 0; }
 .bestiaryControlStatus {
   display: flex;
@@ -1399,27 +1428,33 @@ body {
   flex-shrink: 0;
 }
 
+/* TASK-UI-07 — André: "o botão adicionar caçada poderia estar no header".
+   Virou o 3º item desta linha (era um bloco de largura cheia separado,
+   abaixo do título) — margin-left:auto no botão garante que ele fica
+   encostado na borda direita não importa quantos irmãos vêm antes
+   (título, resumo), sem precisar de space-between (que com 3 itens
+   distribuiria o do meio longe dos outros dois). */
 .bestiaryLadderTopo {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 10px;
 }
 .bestiaryLadderTopo .automationGroupTitle { margin: 0; }
 .bestiaryLadderResumo { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; }
 
 .bestiaryAddHuntsBtn {
-  width: 100%;
-  margin-bottom: 10px;
-  padding: 8px 10px;
+  margin-left: auto;
+  padding: 7px 12px;
   border: 1px solid var(--border-strong);
   border-radius: 4px;
   background: var(--bg-button);
   color: var(--text-primary);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
 }
 .bestiaryAddHuntsBtn:hover { border-color: var(--accent); color: var(--accent); }
 
@@ -1593,13 +1628,45 @@ body {
 /* "Minha escada" — maior prioridade visual da aba. Item ativo (herdado,
    inalterado) continua sendo o único com fundo/realce; os demais só têm
    espaçamento (`gap` na lista), sem borda extra por linha. */
-#bestiaryLadderLista { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
-.bestiaryLadderRow { position: relative; }
-.bestiaryLadderRowAtivo {
+/* TASK-UI-07 — André: "a ideia é ter um cardzinho com as informações". Cada
+   entrada da escada era só texto solto separado por gap — sem fundo/borda
+   própria, a lista inteira lia como um bloco só, sem separar visualmente
+   uma caçada da outra. --bg-inset aqui é o certo (ao contrário do fundo dos
+   cards de nível 1, ver comentário mais abaixo): é um elemento RECESSO
+   dentro de um card que já é --bg-sidebar, então precisa ser mais escuro
+   que o pai pra ler como "encaixado dentro", não "por cima". */
+/* TASK-UI-08 — André: "a ideia é ter os cards lado a lado no horizontal...
+   quantos cabem, vem a quebra de linha e monta a próxima embaixo". Mesma
+   técnica já usada em `.bestiaryCatalogoLista`/`.tabPanel` (grid
+   auto-fit+minmax) — e MESMO piso de 300px que aquelas duas já usam (era
+   260px aqui; testado ao vivo com o styles.css real, num arquivo separado,
+   antes de publicar — ver TASK-UI-08.1 abaixo): quantas colunas couberem na
+   largura, sem @media — numa janela larga cabem 3+ lado a lado, numa
+   estreita cai pra 1, sempre calculado sozinho. */
+/* TASK-UI-08.1 — André: "poderia ficar ajustado o concluída pra caber...
+   não me entregue de qualquer jeito". Com 260px a linha de ações (checkbox+
+   "concluída", stepper, mover/remover) já cabia numa única linha nos testes
+   (conferido de verdade renderizando renderer/styles.css real num arquivo
+   HTML à parte, em 260px/300px/950px de largura, antes de responder) — mas
+   260px é justo o piso técnico, sem folga nenhuma pra variação de fonte
+   entre motores de render. Subido pra 300px (mesmo piso que o resto do app
+   já usa) por margem de segurança, não porque o teste tenha mostrado
+   quebra. */
+#bestiaryLadderLista {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.bestiaryLadderRow {
+  position: relative;
   background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  padding: 8px;
-  margin: -8px;
+  padding: 10px 12px;
+}
+.bestiaryLadderRowAtivo {
+  border-color: var(--accent);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 .bestiaryLadderRowCriatura {
@@ -1634,18 +1701,43 @@ body {
   font-style: italic;
   margin-top: 2px;
 }
-/* Linha 1 (metadados): abates + "concluída". Linha 2 (`...Actions`):
-   stepper de nível + mover/remover. Duas linhas curtas, cada uma com só 2
-   grupos — é o que evita a colisão/quebra confusa que existia quando tudo
-   (checkbox, +1 fase, ▲▼✕) brigava numa linha só. */
-.bestiaryLadderRowMeta {
+/* TASK-UI-04 — André achou o "C" cortado (era "concluída" estourando pra
+   fora do card). Causa: `.bestiaryLadderRowMeta`/`...RowActions` eram
+   `justify-content:space-between` com filhos `white-space:nowrap` — um
+   flex item sem min-width:0 não encolhe abaixo do tamanho do próprio
+   texto, então numa coluna estreita o texto vazava pra fora do card.
+   TASK-UI-04.2 — a primeira correção juntou tier+abates+concluída+stepper+
+   mover numa linha só; André: "ainda não ficou bom" — 5 grupos numa linha
+   só, mesmo com wrap, quebrava de um jeito confuso (o rótulo "concluída"
+   sozinho, longe do checkbox). Voltou a ser 2 linhas curtas — a divisão
+   original fazia sentido, só faltava o `flex-wrap` como rede de segurança:
+   linha 1 (só leitura) = tier + abates; linha 2 (só ação) = concluída à
+   esquerda, stepper+mover à direita. Cada linha tem no máximo 2 grupos, o
+   que evita a colisão que o comentário antigo (v0.9.x) já tinha resolvido
+   uma vez — só faltava a rede de segurança do wrap contra o overflow. */
+.bestiaryLadderRowInfo {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
+  gap: 4px 12px;
+  font-size: 10.5px;
   color: var(--text-muted);
   margin-top: 4px;
+}
+.bestiaryLadderRowActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-top: 6px;
+}
+.bestiaryLadderRowActionsRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .bestiaryLadderConcluidoLabel {
   display: flex;
@@ -1654,13 +1746,6 @@ body {
   white-space: nowrap;
   font-size: 10.5px;
   opacity: 0.75;
-}
-.bestiaryLadderRowActions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 6px;
 }
 .bestiaryLadderStepper {
   display: inline-flex;
@@ -1872,7 +1957,7 @@ body {
 }
 .swagGateMark { color: var(--accent); display: inline-flex; margin-bottom: 10px; }
 .swagGateTitle {
-  font-family: "Fraunces", Georgia, serif;
+  font-family: "Cinzel", Georgia, serif;
   font-size: 22px;
   font-weight: 600;
   color: var(--text-primary);
@@ -1975,27 +2060,40 @@ body {
 .dayXp { grid-area: xp; color: var(--text-muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10px; font-variant-numeric: tabular-nums; }
 .dayTime { grid-area: tempo; color: var(--text-muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10px; font-variant-numeric: tabular-nums; }
 
-/* ---------- TASK-UI-01 — protótipo: workspace central ---------- */
+/* ---------- TASK-UI-02 — workspace central ---------- */
 /* Mesma técnica do modal "Adicionar caçadas" (`.bestiaryModalOverlay`,
-   acima): `position:fixed;inset:0` cobre a JANELA INTEIRA do app, não só a
-   lateral de 250px. z-index abaixo do modal do catálogo (200) de propósito
-   — o Bestiário mora dentro da aba Automação, que por sua vez pode estar
-   dentro deste workspace; assim o catálogo consegue abrir por cima sem as
-   duas camadas brigarem. Protótipo opt-in (`#workspacePrototypeToggle`,
-   renderer.js), desligado por padrão — com ele desligado este overlay nunca
-   sai do `hidden` e a lateral original é o fallback completo. */
+   acima): `position:fixed;inset:0` cobre a JANELA INTEIRA do app. z-index
+   abaixo do modal do catálogo (200) de propósito — o Bestiário mora dentro
+   da aba Automação, que por sua vez pode estar dentro deste workspace;
+   assim o catálogo consegue abrir por cima sem as duas camadas brigarem.
+   Era opt-in (TASK-UI-01, `#workspacePrototypeToggle`); agora é o único
+   destino de #automationPanel/#settingsPanel (ver moveIntoWorkspace,
+   renderer.js) — a antiga lateral de 250px virou só o popover de contas
+   (#sidebar, acima). */
+/* TASK-UI-05 — André: "o modal isola o jogo embaixo... poderia ser
+   movimentado". O overlay não escurece mais a tela nem intercepta clique
+   nenhum (pointer-events:none) — só existe como container de
+   posicionamento; quem recebe clique e arrasto é o card em si
+   (pointer-events:auto), que virou position:absolute (JS calcula/lembra
+   x,y, ver clampWorkspacePosition/applyWorkspacePosition em renderer.js) em
+   vez de centralizado via flex. Sem fundo escuro, o jogo por baixo continua
+   clicável e jogável com o painel aberto. */
 .workspaceOverlay {
-  position: fixed;
+  /* absolute (não fixed) de propósito: o container posicionado mais próximo
+     é #mainArea (position:relative), e é o que o clamp em renderer.js
+     (clampWorkspacePosition, coordenadas 0,0 = canto de #mainArea) espera —
+     mesma convenção que #botFloat já usa. Com fixed, 0,0 seria o canto da
+     JANELA inteira (atrás da trilha/lateral), e o card "centralizado"
+     nasceria deslocado pra esquerda, por baixo da trilha. */
+  position: absolute;
   inset: 0;
   z-index: 150;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
-  padding: 20px;
+  pointer-events: none;
 }
 .workspaceOverlay[hidden] { display: none; }
 .workspaceCard {
+  position: absolute;
+  pointer-events: auto;
   width: min(960px, 94vw);
   height: min(780px, 92vh);
   display: flex;
@@ -2009,16 +2107,20 @@ body {
 .workspaceHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   padding: 14px 18px;
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
+  cursor: grab;
 }
+.workspaceHeader.dragging { cursor: grabbing; }
+.workspaceGrip { color: var(--text-muted); letter-spacing: 1px; font-size: 12px; flex-shrink: 0; }
+.workspaceHeader h2 { flex: 1; }
+.workspaceHeaderActions { cursor: default; }
 .workspaceHeader h2 {
   margin: 0;
   font-size: 15px;
-  font-family: "Fraunces", Georgia, serif;
+  font-family: "Cinzel", Georgia, serif;
   color: var(--text-primary);
 }
 .workspaceHeaderActions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
@@ -2096,21 +2198,109 @@ body {
    `:not([hidden])` é obrigatório aqui: sem ele, esta regra (3 classes) tem
    mais especificidade que `.tabPanel[hidden] { display:none }` (1 classe +
    1 atributo) e VENCERIA o `display:none`, reexibindo as abas escondidas. */
+.workspaceBody .automationScroll { flex: 1; }
 .workspaceBody .automationScroll .tabPanel:not([hidden]) {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 14px;
   align-content: start;
+  /* .automationScroll acima só ganha flex:1 (cresce até preencher
+     #automationPanel) a partir desta regra existir — sem ela sobrava
+     espaço em branco por baixo do grid em toda aba curta. Com
+     align-content:start (não removido: Rotina/Treino/Guild/Análise têm
+     vários cards curtos, esticá-los ficaria estranho), esse espaço extra
+     continua sobrando por padrão — só a aba Bestiário pede pra usá-lo (ver
+     override logo abaixo). */
+  flex: 1;
 }
+/* TASK-UI-06 — André: "Minha escada" (a lista, potencialmente longa) devia
+   "utilizar todo o espaço disponível" em vez de ficar do tamanho do
+   conteúdo com um vão vazio embaixo até o fim do modal. Só a aba Bestiário
+   ganha align-content:stretch (as outras ficam com o align-content:start
+   padrão, de propósito) — o card "Minha escada" cresce pra acompanhar
+   #automationScroll, e por dentro vira flex-column com a lista tomando o
+   espaço sobrando e rolando por conta própria (ver .bestiaryLadderCard/
+   #bestiaryLadderLista abaixo). O outro card ("Auto Bestiary por caçada")
+   também estica junto (é a mesma linha do grid) — conteúdo curto, só sobra
+   espaço vazio dentro DELE em vez de embaixo dos dois. */
+.workspaceBody #autoTabPanelBestiary.tabPanel:not([hidden]) { align-content: stretch; }
+.workspaceBody .bestiaryLadderCard {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.workspaceBody .bestiaryLadderCard #bestiaryLadderLista {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* TASK-UI-06 — André: "Minha escada" deveria "aparecer no padrão de card".
+   --bg-inset é idêntico a --bg-app de propósito (pensado pra CAMPOS
+   recessos, tipo input) — usado como fundo de CARTÃO ele fica indistinguível
+   da própria página, sobrando só a borda de 8% de opacidade pra separar (o
+   que na prática quase não separa nada). --bg-sidebar é um degrau mais claro
+   — é o tom certo pra algo que deve parecer elevado, não encaixado. */
 .workspaceBody .automationGroup {
   margin: 0;
   padding: 16px 20px;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  background: var(--bg-inset);
+  background: var(--bg-sidebar);
   min-width: 0;
 }
 .workspaceBody .automationGroupTitle { font-size: 11.5px; }
+
+/* TASK-UI-03 — André: "ação na cabeça" + card único mais denso pra aba
+   Caçada. Substitui as duas versões anteriores do botão de ligar/desligar
+   dentro desta aba (v0.13.2: width:100% esticado pelo grid; correção
+   incompleta com align-self:start; correção certa com grid-column:1/-1) —
+   o botão não mora mais aqui, foi pro automationHeader (ver index.html e a
+   regra .automationHeader .autoToggleBtn acima). O que sobra na aba é só
+   este card, cheio de rótulo+controle por linha em vez de duas seções com
+   muito espaço vazio pra pouca informação. */
+.huntConfigCard {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 16px 20px;
+}
+.huntConfigTitle {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 4px;
+}
+.huntConfigRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.huntConfigRow:first-of-type { border-top: none; }
+.huntConfigLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  width: 148px;
+  flex-shrink: 0;
+}
+.huntConfigControl { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: center; }
+.huntConfigControl select,
+.huntConfigControl input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-field);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  color: var(--text-primary);
+  padding: 7px 9px;
+  font-size: 13px;
+}
+.huntConfigControl select:focus,
+.huntConfigControl input:focus { border-color: var(--accent); outline: none; }
+.huntConfigRow .segment { flex: 1; margin: 0; }
 /* O histórico (lista de eventos, potencialmente longa) não tem cartões
    `.automationGroup` — é só a lista — então volta a fluir em bloco normal
    em vez de participar do flex-wrap acima. `:not([hidden])` pelo mesmo

@@ -5,7 +5,7 @@
 <title>Swag</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -31,7 +31,7 @@
            (swag:openSignupPage em main.js), não dentro do app. -->
       <p style="margin-top:16px;font-size:0.78rem;color:#9a9a8f;text-align:center;">
         Ainda não tem conta?
-        <a href="#" id="swagCreateAccountLink" style="color:#6FA890;text-decoration:none;font-weight:600;">Criar conta no site →</a>
+        <a href="#" id="swagCreateAccountLink" style="color:var(--accent);text-decoration:none;font-weight:600;">Criar conta no site →</a>
       </p>
     </div>
   </div>
@@ -110,20 +110,16 @@
       </div>
 
       <div id="automationPanel" hidden>
-        <!-- v0.11.8 — "‹ Contas" e "Destacar" dividiam duas linhas inteiras do
-             topo, cada uma com um botão só e o resto vazio (André: "deixa um
-             pouco mais acoplado para aproveitar o espaço"). Agora é uma linha
-             só: voltar na esquerda, destacar na direita. -->
-        <div class="automationPanelTop">
-          <button id="automationBackBtn" type="button" class="backBtn">
-            <svg width="13" height="13" viewBox="0 0 20 20" fill="none"><path d="M12.5 4.5 6 10l6.5 5.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Contas
-          </button>
-          <button type="button" id="botDetachBtn" class="detachBtn" title="Destacar o painel — deixa flutuando sobre o jogo">
-            <svg width="13" height="13" viewBox="0 0 20 20" fill="none"><rect x="2.5" y="5" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M8 5V3.5A1.5 1.5 0 0 1 9.5 2h7A1.5 1.5 0 0 1 18 3.5v7A1.5 1.5 0 0 1 16.5 12H15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-            Destacar
-          </button>
-        </div>
+        <!-- TASK-UI-07 — André: "esse botão Destacar também não faz mais
+             sentido, pode retirar" e, na sequência, "esse botão Contas
+             também não serve mais, pq o botão ✕ já faz a mesma função".
+             Fazia sentido enquanto Automação vivia espremida na lateral
+             estreita (v0.11.8): "Contas" voltava pra lista DENTRO da
+             mesma coluna, e não existia um jeito de "fechar" separado. Hoje
+             o workspace central tem um ✕ único e explícito
+             (workspaceFecharBtn) que já chama exatamente a mesma
+             closeAutomationPanel()/closeSettingsPanel() — os dois botões
+             nunca fizeram coisas diferentes aqui, só existiam duas vezes. -->
         <div class="automationHeader">
           <div class="automationAvatar" id="automationAvatar">?</div>
           <div class="automationHeaderText">
@@ -137,6 +133,31 @@
               <span id="automationStamina"></span>
             </div>
           </div>
+          <!-- TASK-UI-03 — André: "ação na cabeça". O botão de ligar/desligar
+               Caçada morava no topo da aba Caçada como uma barra de largura
+               cheia (dominava tudo, virou queixa de layout). Move pra cá,
+               ao lado do status da conta, do tamanho de um botão comum — o
+               elemento em si (#automationToggleBtn, listeners, classe
+               on/off) é o mesmo de sempre, só mudou de endereço no DOM.
+               TASK-UI-06 — André: o botão "Iniciar Bestiário" deveria
+               aparecer "no mesmo local de Desligar Caçada". Caçada normal e
+               Auto Bestiary são mutuamente exclusivos (nunca os dois ao
+               mesmo tempo pra uma conta), então só faz sentido mostrar UM
+               botão de ação aqui por vez — o que combina com a aba
+               selecionada agora. #bestiaryToggleBtn é irmão deste, mesmo
+               visual; qual dos dois aparece é decidido em
+               syncHeaderAutoToggle() (renderer.js), chamado ao trocar de
+               aba. Nas outras abas (Rotina, Treino, Guild, Análise, Party,
+               Histórico) nenhum dos dois aparece — não têm ação principal
+               própria. -->
+          <button type="button" id="automationToggleBtn" class="autoToggleBtn off">
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path d="M5 3.5v13l11-6.5Z"/></svg>
+            Ligar Caçada
+          </button>
+          <button type="button" id="bestiaryToggleBtn" class="autoToggleBtn off" hidden disabled>
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path d="M5 3.5v13l11-6.5Z"/></svg>
+            Iniciar Bestiário
+          </button>
         </div>
 
         <div class="tabBar" id="automationTabBar">
@@ -176,55 +197,53 @@
 
         <div class="automationScroll">
           <div class="tabPanel" id="autoTabPanelCacada" data-tab="cacada">
-            <!-- v0.9.30 — o botão mora DENTRO da aba Caçada (é o que ele liga),
-                 e no topo dela pra continuar visível sem rolar. Na v0.9.29 ele
-                 ficava FORA do painel e era escondido nas outras abas, o que
-                 empurrava a barra de abas pra cima e pra baixo a cada troca. -->
-            <!-- TASK-003-F1 — renomeado de "Ligar automação" pra "Ligar
-                 Caçada": desde que o Bestiary ganhou seu próprio motor
-                 (mutuamente exclusivo com este), o nome genérico "automação"
-                 ficava ambíguo — os dois são automação, só que de coisas
-                 diferentes. Este botão sempre controlou só a Caçada normal
-                 (huntName/tier da aba Caçada); o texto agora diz isso. -->
-            <button type="button" id="automationToggleBtn" class="autoToggleBtn off">
-              <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path d="M5 3.5v13l11-6.5Z"/></svg>
-              Ligar Caçada
-            </button>
+            <!-- TASK-UI-03 — André: "o que me incomoda não é a UI, é o
+                 layout... posicionamento de botão, tamanho, preenchimento".
+                 As duas seções separadas (Modo de caçada / Caçada+tier+
+                 capacidade) viravam duas caixas com muito espaço vazio pra
+                 pouca informação. Viram um card único, mais denso: rótulo à
+                 esquerda, controle à direita, uma linha por configuração —
+                 mesmos ids/selects/inputs de sempre, só a moldura ao redor
+                 mudou. O botão de ligar/desligar saiu daqui (ver
+                 automationHeader acima, "ação na cabeça"). -->
+            <section class="huntConfigCard">
+              <h2 class="huntConfigTitle">Configuração da caçada</h2>
 
-            <!-- v0.11.20 — o detector de spawn seco decidia no escuro: não dava
-                 pra saber se ele estava vendo criatura, qual ritmo tinha
-                 aprendido, nem quanto faltava pro limiar. Sem isso, "não está
-                 legal" não tem como virar diagnóstico. -->
-
-
-            <section class="automationSection automationGroup">
-              <h4 class="automationGroupTitle">Modo de caçada</h4>
-              <div class="segment">
-                <button type="button" class="segBtn active" id="huntModeSegSolo" data-hunt-mode="solo">Solo</button>
-                <button type="button" class="segBtn" id="huntModeSegGroup" data-hunt-mode="group">Em grupo</button>
+              <div class="huntConfigRow">
+                <span class="huntConfigLabel">Modo</span>
+                <div class="segment huntConfigControl">
+                  <button type="button" class="segBtn active" id="huntModeSegSolo" data-hunt-mode="solo">Solo</button>
+                  <button type="button" class="segBtn" id="huntModeSegGroup" data-hunt-mode="group">Em grupo</button>
+                </div>
               </div>
               <p class="fieldHint" id="huntModeHint">Caça, vende e retoma sozinha, usando as configurações abaixo.</p>
               <details class="hintMore">
                 <summary>Como funciona</summary>
                 <p id="huntModeDetail"></p>
               </details>
-            </section>
 
-            <section class="automationSection automationGroup">
-              <label class="autoLabelRow">
-                <span>Caçada</span>
-                <button type="button" id="automationRefreshBtn" class="autoRefreshBtn" title="Atualizar lista de caçadas">
-                  <svg width="12" height="12" viewBox="0 0 20 20" fill="none"><path d="M16 6.5A6.5 6.5 0 1 0 17.5 10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M16 3v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  Atualizar
-                </button>
-              </label>
-              <select id="automationHuntSelect"><option value="">— carregando —</option></select>
-
-              <label>Tamanho do pull</label>
-              <select id="automationTierSelect"></select>
-
-              <label>Sair quando capacidade ≤ (oz)</label>
-              <input type="number" id="automationCapacityInput" min="0" step="1" />
+              <div class="huntConfigRow">
+                <span class="huntConfigLabel">Caçada</span>
+                <div class="huntConfigControl">
+                  <select id="automationHuntSelect"><option value="">— carregando —</option></select>
+                  <button type="button" id="automationRefreshBtn" class="autoRefreshBtn" title="Atualizar lista de caçadas">
+                    <svg width="12" height="12" viewBox="0 0 20 20" fill="none"><path d="M16 6.5A6.5 6.5 0 1 0 17.5 10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M16 3v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Atualizar
+                  </button>
+                </div>
+              </div>
+              <div class="huntConfigRow">
+                <span class="huntConfigLabel">Tamanho do pull</span>
+                <div class="huntConfigControl">
+                  <select id="automationTierSelect"></select>
+                </div>
+              </div>
+              <div class="huntConfigRow">
+                <span class="huntConfigLabel">Sair se capacidade ≤ (oz)</span>
+                <div class="huntConfigControl">
+                  <input type="number" id="automationCapacityInput" min="0" step="1" />
+                </div>
+              </div>
             </section>
           </div>
 
@@ -255,8 +274,8 @@
               <label>Personagens no rodízio</label>
               <div id="automationRotateList" class="rotateList"></div>
               <details class="hintMore">
-                <summary>Sai pra lista de personagens e entra no próximo, na mesma caçada.</summary>
-                <p>Em vez de ficar parado esperando regenerar, a automação usa o "Sair do jogo" (que volta pra lista de personagens — a conta continua conectada) e entra no próximo marcado, seguindo na caçada configurada. Roda até todos zerarem e então espera normalmente. Nunca toca em e-mail, senha ou "Trocar de conta".</p>
+                <summary>Com 10 min de stamina, sai pra lista de personagens e entra no próximo, na mesma caçada.</summary>
+                <p>O jogo não deixa entrar em caçada com menos de 5 minutos de stamina, então o rodízio não espera zerar: quando o personagem chega em <b>10 minutos</b> (nunca menos que isso), ele sai da caçada, vende e usa o "Sair do jogo" (que volta pra lista de personagens — a conta continua conectada) para entrar no próximo marcado, seguindo na caçada configurada. Roda até todos ficarem sem stamina e então espera normalmente. Nunca toca em e-mail, senha ou "Trocar de conta".</p>
               </details>
             </section>
 
@@ -313,22 +332,28 @@
                foi pro modal #bestiaryHuntModal, fora do fluxo de abas (ver
                abaixo, perto de #botFloat) — assim ele nunca fica escondido
                (display:none) por troca de aba enquanto aberto. -->
+          <!-- TASK-UI-07 — André: "ainda ficou ruim... a ideia é ter um
+               cardzinho com as informações, aproveite o espaço". O botão
+               Iniciar/Pausar já tinha ido pro cabeçalho geral (TASK-UI-06);
+               sem ele, "Auto Bestiary por caçada" sobrava como um card
+               quase vazio (só o hint) do lado de "Minha escada" — os dois
+               esticados na mesma altura (align-content:stretch) deixavam
+               ESSE vazio, não o problema que a esticada tentava resolver.
+               Fundido num card só: o hint (agora "Como funciona",
+               colapsado) e o status ficam no topo de "Minha escada", que
+               vira o único card da aba — cheio de verdade, não só alto. -->
           <div class="tabPanel" id="autoTabPanelBestiary" data-tab="bestiary" hidden>
-            <section class="automationSection automationGroup">
-              <h4 class="automationGroupTitle">Auto Bestiary por caçada</h4>
-              <div id="bestiaryControl" class="bestiaryControl"></div>
-              <details class="hintMore">
-                <summary>Caça cada caçada da lista até o nível escolhido, na ordem de prioridade.</summary>
-                <p>Ao atingir o nível-alvo de uma caçada, a próxima da lista assume. O sinal é o mesmo que o jogo usa pra avisar a fase batida, então chega no instante certo — mas só na transição: uma caçada que já passou do nível-alvo antes de entrar na lista não avança sozinha, precisa marcar "já concluída" manualmente. Só age com a Expedição desligada.</p>
-              </details>
-            </section>
-
-            <section class="automationSection automationGroup">
+            <section class="automationSection automationGroup bestiaryLadderCard">
               <div class="bestiaryLadderTopo">
                 <h4 class="automationGroupTitle">Minha escada</h4>
                 <span id="bestiaryLadderResumo" class="bestiaryLadderResumo"></span>
+                <button type="button" id="bestiaryAddHuntsBtn" class="bestiaryAddHuntsBtn">+ Adicionar caçadas</button>
               </div>
-              <button type="button" id="bestiaryAddHuntsBtn" class="bestiaryAddHuntsBtn">+ Adicionar caçadas</button>
+              <div id="bestiaryControl" class="bestiaryControl"></div>
+              <details class="hintMore">
+                <summary>Como funciona</summary>
+                <p>Caça cada caçada da lista até o nível escolhido, na ordem de prioridade. Ao atingir o nível-alvo de uma caçada, a próxima da lista assume. O sinal é o mesmo que o jogo usa pra avisar a fase batida, então chega no instante certo — mas só na transição: uma caçada que já passou do nível-alvo antes de entrar na lista não avança sozinha, precisa marcar "já concluída" manualmente. Só age com a Expedição desligada.</p>
+              </details>
               <div id="bestiaryLadderLista"></div>
             </section>
           </div>
@@ -463,10 +488,9 @@
       </div>
 
       <div id="settingsPanel" hidden>
-        <button id="settingsBackBtn" type="button" class="backBtn">
-          <svg width="13" height="13" viewBox="0 0 20 20" fill="none"><path d="M12.5 4.5 6 10l6.5 5.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Contas
-        </button>
+        <!-- TASK-UI-07 — mesmo motivo do "‹ Contas" da Automação: redundante
+             com o ✕ do workspace (workspaceFecharBtn já chama
+             closeSettingsPanel()). -->
         <div class="automationHeader">
           <div class="automationAvatar settingsAvatar" id="settingsAvatar">
             <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="3.3" stroke="currentColor" stroke-width="1.6"/><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="10" y1="2.2" x2="10" y2="4.2"/><line x1="10" y1="15.8" x2="10" y2="17.8"/><line x1="2.2" y1="10" x2="4.2" y2="10"/><line x1="15.8" y1="10" x2="17.8" y2="10"/><line x1="4.8" y1="4.8" x2="6.2" y2="6.2"/><line x1="13.8" y1="13.8" x2="15.2" y2="15.2"/><line x1="15.2" y1="4.8" x2="13.8" y2="6.2"/><line x1="6.2" y1="13.8" x2="4.8" y2="15.2"/></g></svg>
@@ -537,6 +561,7 @@
               <details class="hintMore">
                 <summary>Para investigar o jogo, não para o dia a dia.</summary>
                 <p>Grava todas as mensagens que o servidor manda para a <b>conta selecionada</b> — inclusive as que a automação não usa, que são justamente as que faltam mapear. São cerca de 20 mensagens por segundo, então deixe ligado só enquanto estiver investigando.</p>
+                <p>Em desenvolvimento, tudo também vai direto pra um arquivo em <b>logs/</b> (formato <code>.tsv</code>, uma mensagem por linha), <b>sem limite de tempo</b> — dá pra deixar uma sessão longa, com várias caçadas, e o arquivo já fica pronto ao desligar. O "Baixar o log" continua entregando só as últimas ~100s.</p>
               </details>
               <p class="fieldHint" id="diagStatus">Desligado.</p>
               <button type="button" class="diagBtn" id="diagDownloadBtn" disabled>Baixar o log</button>
@@ -680,16 +705,6 @@
           <span>Iniciar com o sistema</span>
           <input type="checkbox" id="autoLaunchToggle" />
         </label>
-        <!-- TASK-UI-01 — protótipo experimental de workspace central. Opt-in,
-             desligado por padrão (localStorage, sem IPC/config real — ver
-             renderer.js). Ligado, os MESMOS #automationPanel/#settingsPanel
-             que hoje vivem espremidos na lateral passam a ser movidos (nunca
-             duplicados) pra um overlay central amplo, igual ao modal
-             "Adicionar caçadas" já faz com o catálogo do Bestiário. -->
-        <label class="switchRow" title="Protótipo TASK-UI-01: abre Automação/Configurações num painel central amplo em vez da lateral estreita">
-          <span>Workspace central (protótipo)</span>
-          <input type="checkbox" id="workspacePrototypeToggle" />
-        </label>
         <button id="reloadAllBtn" type="button">
           <svg width="13" height="13" viewBox="0 0 20 20" fill="none"><path d="M16 6.5A6.5 6.5 0 1 0 17.5 10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M16 3v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           Recarregar todas
@@ -718,18 +733,24 @@
         <div id="botFloatBody"></div>
       </div>
 
-      <!-- TASK-UI-01 — protótipo: workspace central. Mesma técnica do modal
-           "Adicionar caçadas" logo abaixo (`position:fixed`, cobre a janela
-           inteira, fora do fluxo da lateral estreita) — mas em vez de um
-           catálogo novo, é o DESTINO pra onde #automationPanel/#settingsPanel
-           são movidos (appendChild) quando o toggle "Workspace central
-           (protótipo)" está ligado (ver #workspacePrototypeToggle,
-           renderer.js). Com o protótipo desligado (padrão), este overlay
-           nunca sai do estado hidden e os painéis continuam exatamente onde
-           sempre estiveram, dentro de <aside id="sidebar">. -->
+      <!-- TASK-UI-02 — workspace central. Mesma técnica do modal "Adicionar
+           caçadas" logo abaixo (`position:fixed`, cobre a janela inteira) —
+           é o DESTINO fixo pra onde #automationPanel/#settingsPanel são
+           movidos (appendChild) sempre que abrem (ver moveIntoWorkspace em
+           renderer.js). Era opt-in (TASK-UI-01); agora é o único modo.
+           TASK-UI-05 — André: "o modal fica isolando o jogo embaixo, não é
+           possível interagir com o jogo, e o modal poderia ser
+           movimentado". O overlay (`#centralWorkspace`) virou
+           pointer-events:none e sem fundo escurecendo tudo — só o card em
+           si (`#workspaceCard`) recebe clique, então o jogo por baixo
+           continua jogável com o painel aberto. O card virou arrastável
+           pela própria barra do cabeçalho (`#workspaceHeader`), mesma
+           técnica (setPointerCapture) do card "Destacar" antigo — ver
+           renderer.js. -->
       <div id="centralWorkspace" class="workspaceOverlay" hidden>
-        <div class="workspaceCard" role="dialog" aria-modal="true" aria-labelledby="workspaceTitulo">
-          <div class="workspaceHeader">
+        <div class="workspaceCard" id="workspaceCard" role="dialog" aria-modal="true" aria-labelledby="workspaceTitulo">
+          <div class="workspaceHeader" id="workspaceHeader">
+            <span class="workspaceGrip" aria-hidden="true">⠿</span>
             <h2 id="workspaceTitulo">Automação</h2>
             <div class="workspaceHeaderActions">
               <div class="workspaceSwitch" id="workspaceSwitch">

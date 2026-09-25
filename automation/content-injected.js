@@ -77,6 +77,10 @@
     perfilCenario: null, // scenarioId cujo perfil está carregado
     perfilTiles: [], // tiles distintos entre mortes, nesta caçada
     perfilLotes: [], // intervalo entre LOTES de nascimento, nesta caçada
+    // v0.13.4 — quanto tempo o mapa FICOU VAZIO e mesmo assim veio mais bicho
+    // (ms), nesta caçada. É o que diz o quanto dá pra esperar sem cortar onda.
+    perfilVazios: [],
+    vazioDesde: 0, // quando as vivas chegaram a 0 (0 = mapa não está vazio)
     perfilSujo: false, // tem amostra nova pra gravar
     ultimoLoteEm: 0, // início do último lote de nascimento
     loteArmado: true, // um disparo por lote, não um por mensagem
@@ -337,6 +341,7 @@
   function mundoLerMensagem(p) {
     if (!p || typeof p.instanceId !== "string") return;
     const mudou = mundo.instanceId !== null && mundo.instanceId !== p.instanceId;
+    const mesmaInstanciaRepetida = mundo.instanceId !== null && mundo.instanceId === p.instanceId;
     mundo.instanceId = p.instanceId;
     mundo.scenarioId = typeof p.scenarioId === "string" ? p.scenarioId : null;
     mundo.ambience = typeof p.ambience === "string" ? p.ambience : null;
@@ -353,6 +358,12 @@
       const nome = nomeDaCacadaPeloProtocolo();
       if (nome) currentHuntNameCache = nome;
     } catch (e) {}
+    if (mesmaInstanciaRepetida) {
+      // 54 repetido da mesma instância = reconexão (ver spawnRessincronizar).
+      try {
+        spawnRessincronizar();
+      } catch (e) {}
+    }
     if (mudou) {
       mundo.trocasDeInstancia++;
       // Instância nova = spawn novo. Antes o detector era zerado por
@@ -1285,8 +1296,39 @@
     return achado;
   }
 
+  // v0.13.4 — RECONEXÃO NA MESMA INSTÂNCIA. Quando o socket cai e volta, o
+  // servidor reenvia o 54 da MESMA instância e um 15 só com o próprio
+  // personagem: as criaturas que o detector achava vivas não existem mais no
+  // que o cliente passou a ver. Sem isto o mapa "nunca esvaziava" (o `vivos`
+  // guardava fantasmas) e o spawn seco não disparava nunca — visto na caçada
+  // de Skeleton do log `bauj`. Não é instância nova (o rastro e a volta
+  // seguem valendo): só a contagem de vivos e o relógio de "sem nascer" são
+  // refeitos a partir de agora.
+  function spawnRessincronizar() {
+    spawnWatch.vivos.clear();
+    spawnWatch.vazioDesde = 0;
+    // Recomeça a contar de agora — inclusive o piso de tempo e os tiles —,
+    // senão o "andou" dispararia na hora, sem a espera mínima depois da queda.
+    if (spawnWatch.ultimoSpawnEm) {
+      spawnWatch.ultimoSpawnEm = Date.now();
+      spawnWatch.ultimaMorteEm = spawnWatch.ultimoSpawnEm;
+      spawnWatch.tilesDesdeMorte.clear();
+    }
+    spawnWatch.loteArmado = true;
+  }
+
   function spawnRegistrarNascimento(nome, id) {
     const agora = Date.now();
+    // v0.13.4 — o mapa estava vazio e veio bicho: esta é uma amostra do "quanto
+    // dá pra esperar com o mapa vazio e ainda vir mais". Só a PRIMEIRA criatura
+    // de cada onda conta (depois dela `vazioDesde` já foi zerado). O vazio que
+    // NÃO termina em nascimento (a caçada secou de vez) nunca vira amostra —
+    // é justamente o que o detector procura.
+    if (spawnWatch.vazioDesde) {
+      const vazio = agora - spawnWatch.vazioDesde;
+      spawnWatch.vazioDesde = 0;
+      if (vazio > 0 && vazio < LOTE_MAX_MS && spawnWatch.perfilCenario) empilharAmostra(spawnWatch.perfilVazios, vazio);
+    }
     if (spawnWatch.ultimoSpawnEm) {
       const dt = agora - spawnWatch.ultimoSpawnEm;
       // Intervalos absurdos (entrou na caçada agora, ficou parado no menu) não
@@ -1385,6 +1427,18 @@
   const TILES_MIN_AMOSTRAS = 30;
   const TILES_FATOR = 8;
   const TILES_PISO = 25;
+  // v0.13.4 — TETO DO LIMIAR DE TILES (log do André, 23/09/2026).
+  //
+  // O limiar aprendido é `p90 de tiles entre mortes × 8`. Em caçada densa o p90
+  // é pequeno e o limiar cai no piso (25) — mas onde o personagem anda mais
+  // entre mortes ele explode: Vampire deu p90 = 15 → limiar 120. Só que depois
+  // de limpar o mapa o personagem anda ~6,8 passos/s, ou seja, 120 tiles são
+  // ~25s de andança: o critério virava um cronômetro escondido de 25s e a
+  // saída só veio ~30s depois da última morte (o piso de tempo abaixo é 15s).
+  // O teto mantém a ideia de "aprendido por caçada" só até onde ela ajuda; o
+  // resto vira o piso de TEMPO, que é o que protege de sair antes da próxima
+  // onda.
+  const TILES_TETO = 64;
   // v0.11.42 — PISO DE TEMPO, porque tile não é segundo.
   //
   // O critério mede ESPAÇO, e num personagem veloz o espaço passa rápido
@@ -1397,13 +1451,33 @@
   // 18s (Kina). Um piso de 15s preserva as duas — a do Dezin sai 4s mais tarde
   // — e mata a de 6s. Continua sendo 6x mais rápido que o piso de 90s.
   const TILES_MIN_SEGUNDOS = 15;
+  // v0.13.4 — PISO DE TEMPO APRENDIDO POR CAÇADA (pedido do André: "pode
+  // aplicar", depois de medir 13 caçadas em 5 logs).
+  //
+  // O piso fixo de 15s é seguro em todas (o maior tempo com o mapa vazio e
+  // ainda vindo mais bicho foi 11,4s, na Mummy), mas é folgado onde a caçada
+  // nunca fica vazia por muito tempo: Giant Spider, Hero e Troll ficaram no
+  // máximo 3-4s. Agora o piso é `2 × o MAIOR vazio-que-terminou-em-bicho já
+  // visto NESTA caçada`, nunca abaixo de 8s e nunca acima dos 15s de sempre. Só
+  // vale com amostra grande (8+); antes disso continua o 15s de sempre. O
+  // maior, e não um percentil: o custo de errar pra menos é sair no meio de
+  // uma onda que ia nascer.
+  const VAZIO_MIN_AMOSTRAS = 8;
+  const VAZIO_FATOR = 2;
+  const VAZIO_PISO_MS = 8000;
 
   // Lotes: uma amostra a cada 7-20s, então a exigência é menor — e precisa
   // ser, senão o critério não existe nos primeiros minutos.
   const LOTE_JANELA_MS = 2000; // nascimentos a menos disso são o MESMO lote
   const LOTE_MIN_AMOSTRAS = 4;
-  const LOTE_FATOR = 3;
-  const LOTE_PISO_MS = 20000;
+  // v0.13.4 — fator 3 → 2 e piso 20s → 10s. Medido em 4 caçadas (logs de
+  // 23/09/2026): o MAIOR silêncio saudável entre ondas foi 7,4s (Troll), 16,1s
+  // (Hero), 17,6s (Vampire) e ~23s (Swamp Troll) — o p90 aprendido × 2 fica
+  // acima de todos eles com folga (Hero: 32s vs 16s; Swamp Troll: 46s vs
+  // 23s), e o piso de 10s só vale quando o p90 ainda é curto (Troll, Spider).
+  // O mínimo de 2 vem do `Math.max(2, …)` em `limiarDeLote`.
+  const LOTE_FATOR = 2;
+  const LOTE_PISO_MS = 10000;
   const LOTE_MAX_MS = 10 * 60000; // intervalo maior que isso não ensina nada
 
   function carregarPerfis() {
@@ -1441,6 +1515,7 @@
       todos[spawnWatch.perfilCenario] = {
         tiles: spawnWatch.perfilTiles.slice(-PERFIL_MAX),
         lotes: spawnWatch.perfilLotes.slice(-PERFIL_MAX),
+        vazios: spawnWatch.perfilVazios.slice(-PERFIL_MAX),
         em: Date.now(),
       };
       localStorage.setItem(SPAWN_PERFIL_KEY, JSON.stringify(todos));
@@ -1457,6 +1532,8 @@
     spawnWatch.perfilCenario = alvo;
     spawnWatch.perfilTiles = [];
     spawnWatch.perfilLotes = [];
+    spawnWatch.perfilVazios = [];
+    spawnWatch.vazioDesde = 0;
     spawnWatch.perfilSujo = false;
     spawnWatch.ultimoLoteEm = 0;
     spawnWatch.loteArmado = true;
@@ -1465,6 +1542,7 @@
     if (g) {
       if (Array.isArray(g.tiles)) spawnWatch.perfilTiles = g.tiles.slice(-PERFIL_MAX);
       if (Array.isArray(g.lotes)) spawnWatch.perfilLotes = g.lotes.slice(-PERFIL_MAX);
+      if (Array.isArray(g.vazios)) spawnWatch.perfilVazios = g.vazios.slice(-PERFIL_MAX);
     }
   }
 
@@ -1484,6 +1562,8 @@
     }
     spawnWatch.tilesDesdeMorte.clear();
     spawnWatch.ultimaMorteEm = Date.now();
+    // v0.13.4 — a morte que esvazia o mapa abre uma medição de "mapa vazio".
+    if (spawnWatch.vivos.size === 0) spawnWatch.vazioDesde = spawnWatch.ultimaMorteEm;
   }
 
   // p90, não mediana. A mediana de tiles entre mortes é 0 ou 1 em TODAS as
@@ -1519,13 +1599,23 @@
   }
 
   // Limiar de tiles pra esta caçada, ou null enquanto não houver amostra.
+  // Piso de TEMPO (ms) do critério de tiles: o de sempre (15s) até a caçada ter
+  // amostra suficiente, depois o aprendido — que só pode ser MENOR ou igual.
+  function pisoDeTempoDeTiles() {
+    const base = Math.max(5, Number(spawnCfg.tilesMinSeconds) || TILES_MIN_SEGUNDOS) * 1000;
+    if (spawnWatch.perfilVazios.length < VAZIO_MIN_AMOSTRAS) return base;
+    const maior = Math.max(...spawnWatch.perfilVazios);
+    return Math.min(base, Math.max(VAZIO_PISO_MS, maior * VAZIO_FATOR));
+  }
+
   function limiarDeTiles() {
     if (rastroMorto()) return null;
     const p90 = tilesTipicos();
     if (p90 === null) return null;
     const fator = Math.max(2, Number(spawnCfg.tilesFactor) || TILES_FATOR);
     const piso = Math.max(10, Number(spawnCfg.tilesFloor) || TILES_PISO);
-    return Math.max(piso, p90 * fator);
+    const teto = Math.max(piso, Number(spawnCfg.tilesCeiling) || TILES_TETO);
+    return Math.min(teto, Math.max(piso, p90 * fator));
   }
 
   // Limiar de silêncio entre lotes, em ms, ou null.
@@ -2063,7 +2153,13 @@
     bytes: 0,
     eventos: [], // o que é raro, preservado da captura inteira
     eventosBytes: 0,
+    // v0.13.4 — GRAVAÇÃO CONTÍNUA EM DISCO (ver diagStream* abaixo). É um
+    // caminho PARALELO aos anéis acima: os anéis continuam existindo (é o que
+    // o botão "Baixar o log" entrega), o stream só acrescenta um arquivo sem
+    // limite de janela.
+    stream: { arquivo: null, ultimo: null, pendente: [], timer: null, linhas: 0 },
   };
+  const DIAG_STREAM_FLUSH_MS = 2000;
 
   // Telemetria temporária de baseline. Os contadores só são atualizados quando
   // ligados; fora disso, os caminhos quentes continuam sem relógios, IPC extra
@@ -2281,6 +2377,17 @@
     const agora = Date.now();
     diagnostico.total++;
 
+    // v0.13.4 — uma linha por mensagem, `t_ms<TAB>tipo<TAB>texto`. O texto do
+    // servidor é JSON compacto (sem quebra de linha nem TAB crus dentro de
+    // string), então dá pra usar os dois como separador sem escapar nada — o
+    // que também evita reescapar todas as aspas (o formato .json antigo
+    // guardava o texto como string dentro de outra string).
+    const st = diagnostico.stream;
+    if (st.arquivo) {
+      st.pendente.push(`${agora - diagnostico.inicio}\t${tipo}\t${texto.indexOf("\n") === -1 ? texto : texto.replace(/[\r\n]+/g, " ")}\n`);
+      st.linhas++;
+    }
+
     let reg = diagnostico.tipos.get(tipo);
     if (!reg) {
       reg = { qtd: 0, primeiro: agora, ultimo: agora, amostras: [], bytes: 0 };
@@ -2317,8 +2424,91 @@
     }
   }
 
-  function diagLigar(ligado) {
+  // v0.13.4 — GRAVAÇÃO CONTÍNUA EM DISCO.
+  //
+  // André: "o objetivo do log é ser rico e ter detalhes". O anel de 4.000
+  // mensagens guarda só os ÚLTIMOS ~100s: numa captura de 25 minutos com várias
+  // caçadas, só a última tinha nascimento/morte por criatura. Em vez de
+  // encolher o log (filtrar tipo), ele agora vai pra disco conforme chega —
+  // TUDO, sem filtro e sem janela. A memória continua baixa (só o que chegou
+  // nos últimos 2s espera pra ser enviado), que era a razão do teto dos anéis
+  // (v0.12.1: log ligado travava a máquina). Quem escreve é o processo
+  // principal (`diag:appendToProject`), só em desenvolvimento; num build
+  // instalado o renderer descarta e o botão "Baixar o log" segue valendo.
+  function diagStreamFlush() {
+    const st = diagnostico.stream;
+    if (!st.arquivo || !st.pendente.length) return;
+    const texto = st.pendente.join("");
+    st.pendente = [];
+    sendToHost("hm:diagChunk", { arquivo: st.arquivo, texto });
+  }
+
+  async function diagStreamIniciar() {
+    const st = diagnostico.stream;
+    if (st.timer) clearInterval(st.timer);
+    const quem = String(getActiveCharacterName() || "conta").replace(/[^\w.-]+/g, "-");
+    const carimbo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    // O arquivo é definido ANTES de qualquer await: a partir daqui toda
+    // mensagem já entra em `pendente`. O cabeçalho (que precisa da versão,
+    // assíncrona) é colocado na FRENTE depois, com unshift — então ele é
+    // sempre a primeira linha e nenhuma mensagem se perde na espera.
+    st.pendente = [];
+    st.linhas = 0;
+    // Sufixo aleatório: várias contas ligando no mesmo segundo (e sem nome de
+    // personagem ainda, "conta") gravavam NO MESMO arquivo, com as mensagens de
+    // uma misturadas às das outras (visto no primeiro teste real, 233 voltas de
+    // relógio num arquivo de 3 contas).
+    const sufixo = Math.random().toString(36).slice(2, 6);
+    st.arquivo = `swag-proto-${quem}-${carimbo}-${sufixo}.tsv`;
+    st.ultimo = st.arquivo;
+    const arquivo = st.arquivo;
+    let versao = APP_VERSION_DIAG;
+    try {
+      if (ipcRenderer) versao = (await ipcRenderer.invoke("app:getVersion")) || versao;
+    } catch (e) {}
+    // Desligou (ou religou, com outro arquivo) durante a espera: este stream
+    // já não é mais o atual, não há nada a fazer.
+    if (st.arquivo !== arquivo) return;
+    st.pendente.unshift(
+      `#cabecalho\t${JSON.stringify({
+        gerado: new Date().toISOString(),
+        origem: "swag",
+        formato: "tsv: t_ms<TAB>tipo<TAB>texto (uma mensagem por linha). t_ms é relativo a inicioEpochMs.",
+        versao,
+        personagem: getActiveCharacterName(),
+        inicioEpochMs: diagnostico.inicio,
+      })}\n`
+    );
+    st.timer = setInterval(diagStreamFlush, DIAG_STREAM_FLUSH_MS);
+    diagStreamFlush();
+  }
+
+  function diagStreamEncerrar() {
+    const st = diagnostico.stream;
+    if (!st.arquivo) return;
+    st.pendente.push(
+      `#fim\t${JSON.stringify({
+        total: diagnostico.total,
+        linhas: st.linhas,
+        duracaoSegundos: diagnostico.inicio ? Math.round((Date.now() - diagnostico.inicio) / 1000) : 0,
+        tipos: [...diagnostico.tipos.entries()].map(([tipo, r]) => ({ tipo, qtd: r.qtd, bytes: r.bytes })),
+      })}\n`
+    );
+    diagStreamFlush();
+    if (st.timer) clearInterval(st.timer);
+    st.timer = null;
+    st.arquivo = null;
+  }
+
+  // `opcoes.disco === false`: liga só o anel em memória, sem gravar arquivo.
+  // É o caso da RESTAURAÇÃO no boot (o interruptor fica salvo com `diagEnabled`
+  // e volta sozinho): gravar em disco a partir daí ligava o stream em TODAS as
+  // contas ao abrir o app — no primeiro teste real foram 11 MB em poucos
+  // minutos de contas paradas, num arquivo misturado. Arquivo só nasce de um
+  // clique explícito no interruptor (`diagStart`).
+  function diagLigar(ligado, opcoes) {
     const raiz = document.documentElement;
+    const gravarEmDisco = !(opcoes && opcoes.disco === false);
     if (ligado) {
       diagnostico.ativo = true;
       diagnostico.inicio = Date.now();
@@ -2330,9 +2520,15 @@
       diagnostico.eventosBytes = 0;
       if (raiz) raiz.setAttribute(PROTO_MARCA_DIAG, "1");
       saveState({ diagEnabled: true });
-      log("Diagnóstico do protocolo LIGADO — gravando tudo que o servidor manda nesta conta.");
+      if (gravarEmDisco) diagStreamIniciar();
+      log(
+        gravarEmDisco
+          ? "Diagnóstico do protocolo LIGADO — gravando tudo que o servidor manda nesta conta (também direto em disco, em logs/, sem limite de tempo)."
+          : "Diagnóstico do protocolo restaurado (estava ligado ao fechar o app) — só em memória; desligue e ligue de novo pra gravar em disco."
+      );
     } else {
       diagnostico.ativo = false;
+      diagStreamEncerrar();
       if (raiz) raiz.removeAttribute(PROTO_MARCA_DIAG);
       saveState({ diagEnabled: false });
       log("Diagnóstico do protocolo desligado.");
@@ -2456,6 +2652,10 @@
           if (estado === "conectando") {
             socketJogo.sessao++;
             euZerar();
+            // Vivos vistos pelo socket antigo não valem no novo.
+            try {
+              spawnRessincronizar();
+            } catch (e) {}
           }
           socketJogo.estado = estado;
           if (estado === "aberto") socketJogo.abertoEm = Date.now();
@@ -2807,7 +3007,10 @@
     // v0.9.23 — minimizar o "Analisador de caçada" do jogo assim que ele
     // aparecer. Ligado por padrão a pedido do André ("fechar sempre").
     minimizeGameAnalyzer: true,
-    rotateMinStaminaMinutes: 5, // abaixo disso, considera "stamina acabou"
+    // v0.13.4 — 5 -> 10. O jogo NÃO deixa entrar em caçada com menos de 5min de
+    // stamina, então trocar com "≤5" deixava o personagem que saiu com 4min
+    // sem poder voltar e sem trocar (ver `pisoDeStaminaDoRodizio`).
+    rotateMinStaminaMinutes: 10, // até isso, considera "hora de passar a vez"
     running: false,
     cycles: 0,
     log: [],
@@ -3183,6 +3386,10 @@
   // v0.9.18 — quantas trocas de personagem aconteceram sem ninguém conseguir
   // caçar de verdade. Sem isso, com TODO MUNDO sem stamina o rodízio viraria
   // um carrossel infinito de sair/entrar. Zera assim que alguém volta a caçar.
+  // v0.13.4 — declaradas junto do estado do rodízio (bem antes de qualquer
+  // sendState/applyConfig que as use), ver `hasEnoughStaminaToHunt`.
+  const STAMINA_MINIMA_DO_JOGO = 5; // min — abaixo disso o jogo recusa a entrada
+  const RODIZIO_STAMINA_MINIMA = 10; // min — o rodízio troca ATÉ esse valor (e nunca menos)
   let rotationsWithoutHunt = 0;
   // v0.5.0 — o monitor roda a cada 4s (pollTimer); sem isso, esperar
   // stamina regenerar geraria um log novo a cada 4s até bater o limiar.
@@ -3462,7 +3669,22 @@
             const tiers = Array.isArray(h.tiers)
               ? h.tiers.map((t) => (t && t.name ? String(t.name) : "")).filter(Boolean)
               : [];
-            return { hunt: String(h.name).trim(), criaturas, tiers, forca: forcaDaCacada(h) };
+            // TASK-UI-09 — André: ao adicionar uma criatura já batida (com
+            // milhares de abates de sessões anteriores), a escada continuava
+            // criando a entrada com alvo travado em 1 — "deveria já vir
+            // calculado, qual está e qual é a próxima". O catálogo do modal
+            // "Adicionar caçadas" não carregava NENHUM progresso (só nome),
+            // então o host (renderer.js) não tinha como calcular nada
+            // sozinho. `criaturasProgresso` traz fase/abates já calculados
+            // (mesma faseAtualPorChave que a escada já usa) por criatura da
+            // caçada, na mesma ordem de `criaturas` — quem cria a entrada
+            // (adicionarCacadaNaEscada) usa isso pra travar faseAlvo em
+            // faseAtual+1 em vez de 1 fixo.
+            const criaturasProgresso = criaturas.map((nome) => {
+              const chaveNome = nomeParaChaveBestiario(nome);
+              return { nome, faseAtual: faseAtualPorChave(chaveNome), abatesAtuais: economia.bestiario.get(chaveNome) ?? null };
+            });
+            return { hunt: String(h.name).trim(), criaturas, criaturasProgresso, tiers, forca: forcaDaCacada(h) };
           })
           .filter(Boolean);
       })(),
@@ -3553,7 +3775,9 @@
             tilesTipicos: tilesTipicos(),
             tilesLimiar: limiarDeTiles(),
             tilesSegundos: spawnWatch.ultimaMorteEm ? Math.round((Date.now() - spawnWatch.ultimaMorteEm) / 1000) : null,
-            tilesMinSegundos: TILES_MIN_SEGUNDOS,
+            tilesMinSegundos: Math.round(pisoDeTempoDeTiles() / 1000),
+            vaziosAmostras: spawnWatch.perfilVazios.length,
+            vazioMaximoMs: spawnWatch.perfilVazios.length ? Math.max(...spawnWatch.perfilVazios) : null,
             tilesAmostras: spawnWatch.perfilTiles.length,
             tilesMinimo: TILES_MIN_AMOSTRAS,
             loteTipicoMs: loteTipicoMs(),
@@ -3565,6 +3789,8 @@
           }
         : null,
       diagAtivo: diagnostico.ativo,
+      diagArquivo: diagnostico.stream.arquivo || diagnostico.stream.ultimo || null,
+      diagLinhas: diagnostico.stream.linhas,
       diagMensagens: diagnostico.total,
       diagTipos: diagnostico.tipos.size,
       instanciaAtual: mundo.instanceId,
@@ -3637,7 +3863,7 @@
       rotateCharactersEnabled: !!cfg.rotateCharactersEnabled,
       rotateCharacters: cfg.rotateCharacters,
       knownCharacters: cfg.knownCharacters,
-      rotateMinStaminaMinutes: cfg.rotateMinStaminaMinutes,
+      rotateMinStaminaMinutes: pisoDeStaminaDoRodizio(cfg),
       // v0.9.25 — estes DOIS campos deviam ter entrado na v0.9.23 e não
       // entraram: a substituição que os adicionaria não casou (o bloco acima
       // estava com indentação diferente) e falhou calada. Sem `stats`, a aba
@@ -4790,15 +5016,42 @@
   // ler a stamina (elemento pode não existir fora de certas telas — nesse
   // caso não trava por causa disso, segue como antes), ou ela já bateu o
   // limiar configurado. false = ainda precisa esperar regenerar.
+  //
+  // v0.13.4 — O JOGO NÃO DEIXA ENTRAR EM CAÇADA COM MENOS DE 5 MINUTOS DE
+  // STAMINA (André, 24/09/2026). Antes daqui, com "Esperar a stamina encher"
+  // desligado o piso era `> 0`: um personagem que saiu com 4min "tinha
+  // stamina", o bot tentava reentrar, o jogo recusava — e como o rodízio só
+  // é chamado quando esta função devolve false, ele NUNCA trocava de
+  // personagem: ficava travado, sem voltar e sem passar a vez. Agora:
+  //   - o piso é sempre ≥ 5min (regra do jogo), com ou sem espera ligada;
+  //   - com o rodízio ligado (modo Solo), só se entra/segue caçando ACIMA do
+  //     piso do rodízio (10min) — abaixo disso é hora de trocar, e trocar
+  //     depende desta função devolver false.
+
+  // Piso efetivo do rodízio. O valor salvo (`rotateMinStaminaMinutes`, 5 nas
+  // configs antigas) nunca fica abaixo de 10: é a correção acima valendo
+  // também pra quem já tem a config gravada.
+  function pisoDeStaminaDoRodizio(cfg) {
+    const n = Number(cfg && cfg.rotateMinStaminaMinutes);
+    return Math.max(RODIZIO_STAMINA_MINIMA, Number.isNaN(n) ? RODIZIO_STAMINA_MINIMA : n);
+  }
+
   function hasEnoughStaminaToHunt(cfg) {
     const staminaLeft = getStaminaRemainingMinutes();
     if (staminaLeft === null) return true;
     // v0.9.32 — com a ação "Esperar a stamina encher" desligada, o limiar em
-    // minutos não segura ninguém. Ainda assim não se tenta caçar com stamina
-    // zerada: o jogo recusa e o bot ficaria entrando e saindo a cada 4s (o
-    // bug que criou o limiar na v0.5.0). Zerada → cai no `reportNoStamina`.
-    if (cfg.staminaWaitEnabled === false) return staminaLeft > 0;
-    return staminaLeft >= cfg.staminaResumeThreshold;
+    // minutos não segura ninguém. Ainda assim não se tenta caçar sem stamina
+    // (o jogo recusa e o bot ficaria entrando e saindo a cada 4s — o bug que
+    // criou o limiar na v0.5.0): o piso é o mínimo do jogo.
+    let minimo = STAMINA_MINIMA_DO_JOGO;
+    if (cfg.staminaWaitEnabled !== false) {
+      minimo = Math.max(minimo, Number(cfg.staminaResumeThreshold) || 0);
+    }
+    // Rodízio (só Solo, igual ao `tryRotateCharacter`): acima do piso dele.
+    if (cfg.rotateCharactersEnabled && cfg.huntMode !== "group") {
+      minimo = Math.max(minimo, pisoDeStaminaDoRodizio(cfg) + 1);
+    }
+    return staminaLeft >= minimo;
   }
 
   function logStaminaWaitingThrottled(cfg) {
@@ -5143,6 +5396,36 @@
         return;
       }
 
+      // v0.13.4 — TROCA DE PERSONAGEM ANTES DE A STAMINA ACABAR.
+      //
+      // André: "o nosso troca de personagem executa com 0 de stamina... se o
+      // personagem saiu com 4 minutos ele fica travado, não troca e nem volta
+      // pra caçada... precisamos trocar de personagem com 10 minutos". O
+      // rodízio só era chamado DEPOIS que o personagem já estava fora da caçada
+      // (o jogo ejetando aos 0, ou saída por bag cheia/spawn seco/expedição
+      // com a stamina no meio do caminho). Agora, caçando e chegando em 10min
+      // (piso do rodízio), o bot sai da caçada — o próximo tick vende na
+      // cidade e `tryRotateCharacter` passa a vez, porque
+      // `hasEnoughStaminaToHunt` já devolve false abaixo desse piso. Só no
+      // modo Solo (sair da caçada em grupo desmonta o time, igual o resto) e só
+      // enquanto ainda há alguém pra assumir (`rotationsWithoutHunt`): se
+      // todos estão no fim, ficar é melhor que trocar por trocar.
+      if (
+        cfg.rotateCharactersEnabled &&
+        cfg.huntMode !== "group" &&
+        isStaminaExhausted(cfg) &&
+        rotationsWithoutHunt < rotationPoolSize(cfg)
+      ) {
+        log(
+          `Stamina de "${getActiveCharacterName() || "personagem atual"}" chegou em ${formatStaminaMinutes(getStaminaRemainingMinutes())} (rodízio troca com até ${formatStaminaMinutes(pisoDeStaminaDoRodizio(cfg))}) — saindo da caçada pra passar a vez antes de zerar.`
+        );
+        updatePanelStatus("Trocando de personagem (stamina)");
+        await leaveHunt();
+        zerarDeteccaoDeSpawn();
+        consecutiveErrors = 0;
+        return;
+      }
+
       // v0.11.27 — EXPEDIÇÃO PODE TIRAR O PERSONAGEM DE UMA CAÇADA QUE NÃO
       // SERVE PRA NADA.
       //
@@ -5246,6 +5529,13 @@
               (seco.motivo !== "andou" && seco.motivo !== "lote" && seco.tipico >= 1000
                 ? ` (o normal aqui é uma a cada ${Math.round(seco.tipico / 1000)}s)`
                 : "") +
+              // v0.13.4 — o número que mede o ganho desta mudança: quanto o
+              // personagem ficou parado depois da última morte até a decisão
+              // (em 23/09/2026 era 15-19s na maioria, 30s no Vampire, 78s no
+              // Dragon). Está aqui pra dar pra comparar sem abrir log nenhum.
+              (spawnWatch.ultimaMorteEm
+                ? ` [última morte há ${Math.round((Date.now() - spawnWatch.ultimaMorteEm) / 1000)}s]`
+                : "") +
               (destino === caçadaAtual
                 ? " — saindo e entrando de novo pra renovar a caçada."
                 : ` — saindo e indo pra "${destino}".`)
@@ -5253,6 +5543,29 @@
           updatePanelStatus("Renovando a caçada");
           await leaveHunt();
           zerarDeteccaoDeSpawn();
+          // v0.13.4 — VENDER NA IDA À CIDADE. Este caminho saía e reentrava
+          // direto, então o personagem voltava com a bag cheia (a venda só
+          // rodava no próximo tick, se ele ainda estivesse na cidade — e ele
+          // já tinha reentrado). Sair por capacidade sempre vendeu; renovar por
+          // spawn seco também precisa: é a única passagem pela cidade que o
+          // ciclo faz. Falha na venda não pode impedir a renovação (a trava
+          // `soldSinceArrivingInCity` já foi marcada, então o tick não
+          // tentaria de novo), por isso o try/catch.
+          if (cfg.autoSellOnCityArrival !== false) {
+            try {
+              await sellLootOnce(cfg, "Saí da caçada por spawn esgotado");
+            } catch (err) {
+              log(`Não consegui vender antes de renovar a caçada (${(err && err.message) || err}) — sigo com a renovação.`);
+            }
+            if (!algumModoDeCacaAtivo()) return;
+            // Sem stamina pra reentrar (ou stamina de rodízio): mesmo destino
+            // de quem vendeu por capacidade — passa a vez ou espera, em vez de
+            // tentar entrar e ser recusado pelo jogo.
+            if (!hasEnoughStaminaToHunt(cfg)) {
+              await afterSellingDecideNext(cfg, caçadaAtual);
+              return;
+            }
+          }
           // Mudou de mapa: conta como troca de expedição, pra não virar
           // carrossel se dois objetivos ficarem empatados.
           if (alvo.expedicao && destino !== caçadaAtual) expedicaoUltimaTrocaEm = Date.now();
@@ -5949,8 +6262,13 @@
   function isStaminaExhausted(cfg) {
     const left = getStaminaRemainingMinutes();
     if (left === null) return false; // não deu pra ler — não arrisca trocar
-    const floor = Number(cfg.rotateMinStaminaMinutes);
-    return left <= (Number.isNaN(floor) ? 5 : floor);
+    return left <= pisoDeStaminaDoRodizio(cfg);
+  }
+
+  // Tamanho da fila do rodízio — quantos personagens podem revezar. Usado pra
+  // saber quando "já demos a volta e ninguém tem stamina".
+  function rotationPoolSize(cfg) {
+    return ((cfg.rotateCharacters || []).filter(Boolean).length) || listCharactersOnScreen().length || 2;
   }
 
   // Próximo da fila, começando de quem está logado agora. Lista vazia = usa a
@@ -6014,7 +6332,7 @@
     // Se já demos a volta na fila inteira e ninguém tinha stamina, parar de
     // trocar: acabou pra todo mundo. Fica esperando regenerar do jeito
     // normal, em vez de ficar entrando e saindo do jogo sem parar.
-    const poolSize = ((cfg.rotateCharacters || []).filter(Boolean).length) || listCharactersOnScreen().length || 2;
+    const poolSize = rotationPoolSize(cfg);
     if (rotationsWithoutHunt >= poolSize) {
       if (Date.now() - lastStaminaLogAt >= STAMINA_LOG_INTERVAL_MS) {
         lastStaminaLogAt = Date.now();
@@ -6029,7 +6347,7 @@
 
     updatePanelStatus("Trocando de personagem");
     log(
-      `Stamina de "${currentName || "personagem atual"}" no fim (${formatStaminaMinutes(getStaminaRemainingMinutes())}) — saindo pra lista de personagens pra passar a vez.`
+      `Stamina de "${currentName || "personagem atual"}" em ${formatStaminaMinutes(getStaminaRemainingMinutes())} (troco com até ${formatStaminaMinutes(pisoDeStaminaDoRodizio(cfg))}; o jogo não deixa entrar em caçada com menos de ${formatStaminaMinutes(STAMINA_MINIMA_DO_JOGO)}) — saindo pra lista de personagens pra passar a vez.`
     );
 
     // A transição começa aqui. Limpar antes de sair impede que uma confirmação
@@ -6379,11 +6697,11 @@
     // saudáveis, e ~18s depois da última morte em vez dos 90s do piso.
     const limiarTiles = limiarDeTiles();
     const desdeUltimaMorte = spawnWatch.ultimaMorteEm ? Date.now() - spawnWatch.ultimaMorteEm : Infinity;
-    const pisoSegundos = Math.max(5, Number(spawnCfg.tilesMinSeconds) || TILES_MIN_SEGUNDOS);
+    const pisoTempoMs = pisoDeTempoDeTiles();
     if (
       limiarTiles !== null &&
       spawnWatch.tilesDesdeMorte.size >= limiarTiles &&
-      desdeUltimaMorte >= pisoSegundos * 1000
+      desdeUltimaMorte >= pisoTempoMs
     ) {
       return {
         motivo: "andou",
@@ -6445,6 +6763,7 @@
     spawnWatch.tilesDesdeMorte.clear();
     spawnWatch.ultimaMorteEm = 0;
     spawnWatch.ultimoLoteEm = 0;
+    spawnWatch.vazioDesde = 0;
     spawnWatch.loteArmado = true;
     gravarPerfil();
   }
@@ -7587,7 +7906,7 @@
     }
     if (partial.rotateMinStaminaMinutes !== undefined) {
       const n = Number(partial.rotateMinStaminaMinutes);
-      if (!Number.isNaN(n)) next.rotateMinStaminaMinutes = n;
+      if (!Number.isNaN(n)) next.rotateMinStaminaMinutes = Math.max(RODIZIO_STAMINA_MINIMA, n);
     }
     // v0.13.0 — Auto Bestiary (Ladder). O painel manda o objeto inteiro
     // (lista editada por completo, igual `rotateCharacters`) — nunca confia
@@ -7851,7 +8170,7 @@
     startSpawnConfigWatcher();
     // v0.11.20 — retoma a gravação do protocolo se ela estava ligada antes do
     // reinício. Sem isto, a chave salva não serviria pra nada.
-    if (loadState().diagEnabled) diagLigar(true);
+    if (loadState().diagEnabled) diagLigar(true, { disco: false });
     // v0.11.9 — religar sozinha depois de server save/queda.
     startRestartWatcher();
     // v0.9.23 — analyzer próprio + minimizar o analisador do jogo.

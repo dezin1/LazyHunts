@@ -31,7 +31,7 @@ const ZOOM_STEP = 0.1;
 // Paleta de cores dos avatares — só pra dar variedade visual entre contas,
 // escolhida a partir de um hash simples do id da aba (mesma conta sempre
 // cai na mesma cor, sem precisar guardar nada extra).
-const AVATAR_COLORS = ["#e0ac4c", "#5fb0e8", "#7ad19a", "#c98be0", "#e88b6a", "#6ad1c9"];
+const AVATAR_COLORS = ["#C9A25C", "#C1795A", "#5FA38C", "#6C8FB0", "#9482B0", "#A6A05C"];
 
 const appEl = document.getElementById("app");
 const railEl = document.getElementById("iconRail");
@@ -53,7 +53,6 @@ const autoLaunchToggle = document.getElementById("autoLaunchToggle");
 
 const accountsGroupEl = document.getElementById("accountsGroup");
 const automationPanelEl = document.getElementById("automationPanel");
-const automationBackBtn = document.getElementById("automationBackBtn");
 const automationAvatarEl = document.getElementById("automationAvatar");
 const automationTitleEl = document.getElementById("automationTitle");
 const automationDotEl = document.getElementById("automationDot");
@@ -82,12 +81,17 @@ const expedicaoListaEl = document.getElementById("expedicaoLista");
 // pesquisável (`bestiaryCatalogo`, vindo pronto do protocolo — ver
 // content-injected.js) e um botão por criatura pra adicionar/avançar.
 // TASK-003-R2 — o checkbox discreto (`automationBestiaryLadderToggle`) saiu
-// da apresentação; `bestiaryControlEl` é onde o botão Iniciar/Pausar entra.
+// da apresentação; `bestiaryControlEl` mostra só o texto de status agora.
+// TASK-UI-06 — o BOTÃO Iniciar/Pausar saiu daqui e foi pro cabeçalho
+// (`bestiaryToggleBtn`, estático no HTML, mesmo padrão do
+// `automationToggleBtn` da Caçada) — só a frase de status continua sendo
+// recriada por render em `bestiaryControlEl`.
 const bestiaryControlEl = document.getElementById("bestiaryControl");
+const bestiaryToggleBtn = document.getElementById("bestiaryToggleBtn");
 const bestiaryLadderListaEl = document.getElementById("bestiaryLadderLista");
 const bestiaryLadderResumoEl = document.getElementById("bestiaryLadderResumo");
 // TASK-003-R2.2 — catálogo completo virou modal: fica fora da aba (ver
-// index.html, perto de #botFloat), só é preenchido enquanto aberto.
+// index.html, perto de #centralWorkspace), só é preenchido enquanto aberto.
 const bestiaryAddHuntsBtn = document.getElementById("bestiaryAddHuntsBtn");
 const bestiaryHuntModalEl = document.getElementById("bestiaryHuntModal");
 const bestiaryModalFecharBtn = document.getElementById("bestiaryModalFecharBtn");
@@ -188,13 +192,6 @@ const automationResumeSessionHint = document.getElementById("automationResumeSes
 const railCheckUpdateBtn = document.getElementById("railCheckUpdateBtn");
 const railSettingsBtn = document.getElementById("railSettingsBtn");
 const settingsPanelEl = document.getElementById("settingsPanel");
-const botFloatEl = document.getElementById("botFloat");
-const botFloatBarEl = document.getElementById("botFloatBar");
-const botFloatBodyEl = document.getElementById("botFloatBody");
-const botFloatTitleEl = document.getElementById("botFloatTitle");
-const botDetachBtn = document.getElementById("botDetachBtn");
-const botDockBtn = document.getElementById("botDockBtn");
-const settingsBackBtn = document.getElementById("settingsBackBtn");
 const telegramEnabledToggle = document.getElementById("telegramEnabledToggle");
 const telegramTokenInput = document.getElementById("telegramTokenInput");
 const telegramChatIdInput = document.getElementById("telegramChatIdInput");
@@ -504,6 +501,23 @@ function ensureWebview(tab) {
     // (pode ter megabytes) e vira um .json baixado na hora.
     if (e.channel === "hm:diag") {
       baixarDiagnostico(tab, (e.args && e.args[0]) || null);
+      return;
+    }
+    // v0.13.4 — pedaço da gravação contínua em disco (a cada ~2s enquanto o
+    // log está ligado). Sem await: a fila fica no processo principal.
+    if (e.channel === "hm:diagChunk") {
+      const chunk = (e.args && e.args[0]) || {};
+      if (chunk.arquivo && typeof chunk.texto === "string") {
+        window.hunteraFarm
+          .appendDiagToProject(chunk.arquivo, chunk.texto)
+          .then((r) => {
+            gravacaoEmDiscoFalhou = !(r && r.ok);
+            gravacaoEmDiscoMotivo = r && !r.ok ? r.motivo || "" : "";
+          })
+          .catch(() => {
+            gravacaoEmDiscoFalhou = true;
+          });
+      }
       return;
     }
     if (e.channel === "hm:perf") {
@@ -908,8 +922,7 @@ function renderTabs() {
 // nas três hidden flags espalhado — mais fácil de garantir que nunca fica
 // duas abertas ao mesmo tempo por engano.
 function showAccountsList() {
-  // Destacado, o painel não faz parte do rodízio de "telas" da barra lateral.
-  if (!botDetached) automationPanelEl.hidden = true;
+  automationPanelEl.hidden = true;
   settingsPanelEl.hidden = true;
   accountsGroupEl.hidden = false;
   railAutomationBtn.classList.remove("on");
@@ -932,17 +945,14 @@ function openAutomationPanel(tabId) {
   automationAvatarEl.style.background = avatarColorFor(tabId);
   automationAvatarEl.textContent = (tab?.label.trim()[0] || "?").toUpperCase();
   automationTitleEl.textContent = tab?.label || "";
-  // v0.9.17 — destacado, o painel vive no card flutuante: a barra lateral
-  // continua mostrando a lista de contas (é o ponto da opção C).
-  botFloatTitleEl.textContent = tab?.label ? `${tab.label} · automação` : "Automação";
-  // TASK-UI-01 — com o protótipo de workspace central ligado, o painel vai
-  // pro overlay (moveIntoWorkspace) e a lista de contas continua visível na
-  // lateral (é o ponto do protótipo: nunca mais "sumir" atrás do painel).
-  if (isWorkspacePrototypeOn()) moveIntoWorkspace("automacao");
-  accountsGroupEl.hidden = isWorkspacePrototypeOn() ? false : !botDetached ? true : false;
+  // TASK-UI-02 — o painel vai pro overlay central (moveIntoWorkspace); o
+  // popover de contas, se estava aberto, fecha sozinho — o overlay já cobre
+  // a tela toda, não faz sentido os dois abertos ao mesmo tempo.
+  moveIntoWorkspace("automacao");
+  setSidebarOpen(false);
+  accountsGroupEl.hidden = false;
   settingsPanelEl.hidden = true;
   automationPanelEl.hidden = false;
-  if (botDetached) botFloatEl.hidden = false;
   railAutomationBtn.classList.add("on");
   railSettingsBtn.classList.remove("on");
   // primeira vez abrindo essa conta — pede a lista de caçadas dela.
@@ -950,6 +960,11 @@ function openAutomationPanel(tabId) {
     sendAutomationCommand(tabId, { type: "refreshHunts" });
   }
   syncAutomationPanel();
+  // TASK-UI-06 — troca de conta não deveria mudar qual dos dois botões
+  // (Caçada/Bestiário) aparece no cabeçalho; isso continua decidido só pela
+  // aba selecionada. Mas garante o estado certo mesmo na primeiríssima
+  // abertura, antes de qualquer clique em aba.
+  syncHeaderAutoToggle();
 }
 
 function closeAutomationPanel() {
@@ -959,10 +974,11 @@ function closeAutomationPanel() {
 }
 
 function openSettingsPanel() {
-  // TASK-UI-01 — ver openAutomationPanel acima: mesma ideia, painel de
+  // TASK-UI-02 — ver openAutomationPanel acima: mesma ideia, painel de
   // Configurações vai pro workspace central em vez da lateral.
-  if (isWorkspacePrototypeOn()) moveIntoWorkspace("config");
-  accountsGroupEl.hidden = isWorkspacePrototypeOn() ? false : true;
+  moveIntoWorkspace("config");
+  setSidebarOpen(false);
+  accountsGroupEl.hidden = false;
   automationPanelEl.hidden = true;
   settingsPanelEl.hidden = false;
   railSettingsBtn.classList.add("on");
@@ -1049,8 +1065,6 @@ railCheckUpdateBtn.addEventListener("click", () => {
     });
 });
 
-automationBackBtn.addEventListener("click", closeAutomationPanel);
-settingsBackBtn.addEventListener("click", closeSettingsPanel);
 automationHuntSelect.addEventListener("change", () => {
   if (!selectedAutomationTabId) return;
   const huntName = automationHuntSelect.value;
@@ -1150,25 +1164,34 @@ const ICONE_PLAY = '<svg width="13" height="13" viewBox="0 0 20 20" fill="curren
 const ICONE_PAUSE = '<svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="4" width="3.5" height="12" rx="1"/><rect x="11.5" y="4" width="3.5" height="12" rx="1"/></svg>';
 
 function renderBestiaryControl(state) {
-  if (!bestiaryControlEl) return;
   const ladder = state.bestiaryLadder || {};
   const itens = Array.isArray(ladder.itens) ? ladder.itens : [];
   const enabled = !!ladder.enabled;
+  const btn = bestiaryToggleBtn;
 
   if (!itens.length) {
-    bestiaryControlEl.innerHTML =
-      `<button type="button" class="autoToggleBtn off" id="bestiaryStartBtn" disabled>${ICONE_PLAY}Iniciar Bestiário</button>` +
-      '<p class="fieldHint bestiaryControlHint">Adicione ao menos uma caçada abaixo para começar.</p>';
+    if (btn) {
+      btn.className = "autoToggleBtn off";
+      btn.innerHTML = `${ICONE_PLAY}Iniciar Bestiário`;
+      btn.disabled = true;
+      btn.onclick = null;
+    }
+    if (bestiaryControlEl) {
+      bestiaryControlEl.innerHTML = '<p class="fieldHint bestiaryControlHint">Adicione ao menos uma caçada em "+ Adicionar caçadas" pra começar.</p>';
+    }
     return;
   }
 
   if (!enabled) {
-    bestiaryControlEl.innerHTML = `<button type="button" class="autoToggleBtn off" id="bestiaryStartBtn">${ICONE_PLAY}Iniciar Bestiário</button>`;
-    const startBtn = document.getElementById("bestiaryStartBtn");
-    // Regra 2 — só liga `enabled`; `itens` é a MESMA referência recebida do
-    // estado atual, sem tocar ordem/conteúdo.
-    if (startBtn) {
-      startBtn.addEventListener("click", () => {
+    if (btn) {
+      btn.className = "autoToggleBtn off";
+      btn.innerHTML = `${ICONE_PLAY}Iniciar Bestiário`;
+      btn.disabled = false;
+      // Regra 2 — só liga `enabled`; `itens` é a MESMA referência recebida
+      // do estado atual, sem tocar ordem/conteúdo. `onclick` (não
+      // addEventListener) de propósito: cada render substitui o handler
+      // anterior em vez de empilhar um novo a cada state novo.
+      btn.onclick = () => {
         // TASK-003-D1 — confirma que o clique disparou e o que foi enviado.
         console.log("[BESTIARY-START]", "clique-iniciar", {
           itens: itens.length,
@@ -1176,8 +1199,9 @@ function renderBestiaryControl(state) {
           timestamp: new Date().toISOString(),
         });
         enviarBestiaryLadder(itens, true);
-      });
+      };
     }
+    if (bestiaryControlEl) bestiaryControlEl.innerHTML = "";
     return;
   }
 
@@ -1186,14 +1210,13 @@ function renderBestiaryControl(state) {
   const statusLinha = itemAtivo
     ? `caçando "${escapeHtml(itemAtivo.hunt || "?")}" — fase ${Number(itemAtivo.faseAtual) || 0} → alvo ${Number(itemAtivo.faseAlvo) || 1}`
     : "aguardando a próxima caçada da lista";
-  bestiaryControlEl.innerHTML =
-    `<button type="button" class="autoToggleBtn on" id="bestiaryPauseBtn">${ICONE_PAUSE}Pausar Bestiário</button>` +
-    `<p class="bestiaryControlStatus"><span class="bestiaryControlStatusDot"></span>Bestiário ativo — ${statusLinha}</p>`;
-  const pauseBtn = document.getElementById("bestiaryPauseBtn");
-  // Regra 3 — pausar só desliga `enabled`; a escada inteira (ordem, níveis,
-  // concluídas) segue intacta pra retomar de onde parou.
-  if (pauseBtn) {
-    pauseBtn.addEventListener("click", () => {
+  if (btn) {
+    btn.className = "autoToggleBtn on";
+    btn.innerHTML = `${ICONE_PAUSE}Pausar Bestiário`;
+    btn.disabled = false;
+    // Regra 3 — pausar só desliga `enabled`; a escada inteira (ordem,
+    // níveis, concluídas) segue intacta pra retomar de onde parou.
+    btn.onclick = () => {
       // TASK-003-D1
       console.log("[BESTIARY-START]", "clique-pausar", {
         itens: itens.length,
@@ -1202,7 +1225,10 @@ function renderBestiaryControl(state) {
         timestamp: new Date().toISOString(),
       });
       enviarBestiaryLadder(itens, false);
-    });
+    };
+  }
+  if (bestiaryControlEl) {
+    bestiaryControlEl.innerHTML = `<p class="bestiaryControlStatus"><span class="bestiaryControlStatusDot"></span>Bestiário ativo — ${statusLinha}</p>`;
   }
 }
 
@@ -1250,7 +1276,20 @@ function adicionarCacadaNaEscada(hunt, criatura, tier) {
   const atual = automationState.get(selectedAutomationTabId) || {};
   const itensAtuais = (atual.bestiaryLadder && atual.bestiaryLadder.itens) || [];
   if (itensAtuais.some((it) => it && it.hunt === hunt && it.criatura === criatura)) return;
-  const novoItem = { hunt, criatura, faseAlvo: 1, concluido: false };
+  // TASK-UI-09 — André: "sempre que puxa um bicho novo... continua da
+  // primeira fase, que é a 1 — deveria já vir calculado, qual está e qual é
+  // a próxima". faseAlvo era travado em 1 sempre, mesmo pra uma criatura já
+  // com milhares de abates de sessões anteriores (a entrada nascia "já
+  // passada do alvo"). Agora usa o progresso que o catálogo já manda
+  // calculado (`criaturasProgresso`, content-injected.js) pra travar o
+  // mínimo em faseAtual+1 — mesma regra de piso que o stepper já aplica
+  // depois de criada (ajustarFaseAlvo).
+  const catalogoDaHunt = (Array.isArray(atual.bestiaryCatalogo) ? atual.bestiaryCatalogo : []).find((h) => h && h.hunt === hunt);
+  const progresso = catalogoDaHunt && Array.isArray(catalogoDaHunt.criaturasProgresso)
+    ? catalogoDaHunt.criaturasProgresso.find((c) => c && c.nome === criatura)
+    : null;
+  const faseAtualDaCriatura = progresso ? Number(progresso.faseAtual) || 0 : 0;
+  const novoItem = { hunt, criatura, faseAlvo: Math.max(1, faseAtualDaCriatura + 1), concluido: false };
   const tierValido = tierValidoParaHunt(atual, hunt, typeof tier === "string" ? tier.trim() : "");
   if (tierValido) novoItem.tier = tierValido;
   const novo = itensAtuais.concat([novoItem]);
@@ -1629,24 +1668,26 @@ function renderBestiaryLadder(state) {
       </div>
       ${eDuplicataLegada ? '<div class="bestiaryLadderRowLegado">config. legada — duplicata desta caçada, não consolidada automaticamente</div>' : ""}
       ${criaturaSubLine}
-      <div class="bestiaryLadderRowTier">Tier: ${tierHtml}</div>
       <div class="expBar"><div class="expFill" style="width:${pct}%"></div></div>
-      <div class="bestiaryLadderRowMeta">
-        ${it.abatesAtuais != null ? `<span class="fieldHint">${fmtNum(it.abatesAtuais)} abates</span>` : "<span></span>"}
+      <div class="bestiaryLadderRowInfo">
+        <div class="bestiaryLadderRowTier">Tier: ${tierHtml}</div>
+        ${it.abatesAtuais != null ? `<span class="fieldHint">${fmtNum(it.abatesAtuais)} abates</span>` : ""}
+      </div>
+      <div class="bestiaryLadderRowActions">
         <label class="bestiaryLadderConcluidoLabel">
           <input type="checkbox" data-ladder-done="${i}"${done ? " checked" : ""} /> concluída
         </label>
-      </div>
-      <div class="bestiaryLadderRowActions">
-        <div class="bestiaryLadderStepper" role="group" aria-label="Nível-alvo de ${escapeHtml(huntLabel)}">
-          <button type="button" data-ladder-fase-down="${i}" aria-label="Diminuir nível-alvo"${faseAlvo <= Math.max(1, faseAtual + 1) ? " disabled" : ""}>−</button>
-          <span class="bestiaryLadderStepperValue">${faseAlvo}</span>
-          <button type="button" data-ladder-fase-up="${i}" aria-label="Aumentar nível-alvo">+</button>
-        </div>
-        <div class="bestiaryLadderMoveGroup">
-          <button type="button" data-ladder-up="${i}" title="Subir prioridade"${i === 0 ? " disabled" : ""}>▲</button>
-          <button type="button" data-ladder-down="${i}" title="Descer prioridade"${i === itens.length - 1 ? " disabled" : ""}>▼</button>
-          <button type="button" data-ladder-remove="${i}" title="Remover">✕</button>
+        <div class="bestiaryLadderRowActionsRight">
+          <div class="bestiaryLadderStepper" role="group" aria-label="Nível-alvo de ${escapeHtml(huntLabel)}">
+            <button type="button" data-ladder-fase-down="${i}" aria-label="Diminuir nível-alvo"${faseAlvo <= Math.max(1, faseAtual + 1) ? " disabled" : ""}>−</button>
+            <span class="bestiaryLadderStepperValue">${faseAlvo}</span>
+            <button type="button" data-ladder-fase-up="${i}" aria-label="Aumentar nível-alvo">+</button>
+          </div>
+          <div class="bestiaryLadderMoveGroup">
+            <button type="button" data-ladder-up="${i}" title="Subir prioridade"${i === 0 ? " disabled" : ""}>▲</button>
+            <button type="button" data-ladder-down="${i}" title="Descer prioridade"${i === itens.length - 1 ? " disabled" : ""}>▼</button>
+            <button type="button" data-ladder-remove="${i}" title="Remover">✕</button>
+          </div>
         </div>
       </div>
     </div>`;
@@ -1798,6 +1839,9 @@ spawnEnabledToggle.addEventListener("change", () => salvarSpawnConfig({ enabled:
 const diagEnabledToggle = document.getElementById("diagEnabledToggle");
 const diagDownloadBtn = document.getElementById("diagDownloadBtn");
 const diagStatus = document.getElementById("diagStatus");
+// v0.13.4 — resultado do último pedaço enviado pra gravação contínua.
+let gravacaoEmDiscoFalhou = false;
+let gravacaoEmDiscoMotivo = "";
 
 function contaDoDiagnostico() {
   // Sempre a conta selecionada no painel — foi a escolha do André, e é o que
@@ -1817,10 +1861,19 @@ function renderDiagStatus() {
     return;
   }
   const nome = st.characterName || "a conta selecionada";
+  // v0.13.4 — enquanto liga, cada mensagem também vai pra um arquivo em
+  // `logs/` (sem limite de tempo). Se o processo principal recusou (build
+  // instalado, disco cheio…), o texto diz isso em vez de prometer um arquivo
+  // que não existe.
+  const disco = st.diagArquivo
+    ? gravacaoEmDiscoFalhou
+      ? ` Sem gravação em disco${gravacaoEmDiscoMotivo ? ` (${gravacaoEmDiscoMotivo})` : ""} — só o "Baixar o log" (últimas ~100s).`
+      : ` Em disco: logs/${st.diagArquivo}.`
+    : "";
   diagStatus.textContent = ativo
-    ? `Gravando ${nome}: ${fmtNum(st.diagMensagens || 0)} mensagens, ${st.diagTipos || 0} tipos.`
+    ? `Gravando ${nome}: ${fmtNum(st.diagMensagens || 0)} mensagens, ${st.diagTipos || 0} tipos.${disco}`
     : st.diagMensagens
-      ? `Parado. ${fmtNum(st.diagMensagens)} mensagens gravadas de ${nome} — ainda dá pra baixar.`
+      ? `Parado. ${fmtNum(st.diagMensagens)} mensagens de ${nome}.${disco}`
       : "Desligado.";
 }
 
@@ -2754,7 +2807,13 @@ function renderSpawnLive(state) {
     partes.push(`aprendendo o ritmo dos lotes (${s.loteAmostras}/${s.loteMinimo})`);
   }
   if (s.tilesLimiar) {
-    partes.push(`andou ${s.tilesAndados} tiles sem matar (normal ${s.tilesTipicos}, sai com ${s.tilesLimiar})`);
+    // v0.13.4 — o piso de tempo agora é aprendido por caçada (8-15s): o painel
+    // mostra o que está valendo e com quantas amostras de "mapa vazio que ainda
+    // veio mais bicho" ele foi calculado (8+ pra sair do padrão de 15s).
+    const pisoTxt = s.tilesMinSegundos
+      ? `, ≥${s.tilesMinSegundos}s sem matar${s.vaziosAmostras != null ? ` [${s.vaziosAmostras}/8 vazios medidos]` : ""}`
+      : "";
+    partes.push(`andou ${s.tilesAndados} tiles sem matar (normal ${s.tilesTipicos}, sai com ${s.tilesLimiar}${pisoTxt})`);
   } else if (!s.seguindoMeuId) {
     // v0.11.42 — sem o id do personagem não há rastro, e sem rastro o critério
     // de tiles não existe. Dizer "aprendendo o mapa" aqui seria mentira: ele
@@ -3701,201 +3760,55 @@ zoomLabel.addEventListener("click", () => {
   persistZoomState();
 });
 
-// ---------- trilha de ícones + rodapé da barra lateral ----------
+// ---------- trilha de ícones + popover de contas ----------
 
-// v0.7.1 — André: "faz um botão hamburguer para recolher o menu". Recolhe o
-// #sidebar inteiro pra largura 0 (ver CSS: `#app.sidebarCollapsed #sidebar`)
-// — a trilha de ícones continua sempre visível (com o próprio ☰), então dá
-// sempre pra abrir de volta.
-// v0.9.0 — André: "garantir que tudo fique salvo de onde estava o último
-// estado do aplicativo". Isso (e gridMode/zoom/tabs-collapsed/aba ativa
-// logo abaixo) passou a persistir em localStorage (mesmo padrão dos temas
-// da v0.8.0) e é restaurado logo no início do init() (bloco de
-// restauração de sessão, ver comentário "v0.9.0 — restaura aba
-// ativa/zoom/grade/recolhido" mais abaixo neste arquivo). Antes disso era
-// "só de tela" de propósito — não é mais.
-// v0.9.17 — "Trilha que expande" (opção B da proposta de layout, aprovada
-// pelo André). O hambúrguer saiu: a trilha de 52px É o estado recolhido, e
-// passar o mouse nela abre a barra; tirar o mouse recolhe. O antigo ☰ virou
-// o "fixar aberto" (⚲), pra quando ele vai mexer em várias coisas seguidas.
-//
-// Isso resolve a queixa original ("eu não sei se gosto muito desse menu
-// hambúrguer") sem o efeito colateral que o ☰ tinha: recolhido, a lista de
-// contas sumia inteira e não dava pra notar que uma conta travou. Agora as
-// contas moram TAMBÉM na trilha, com o pontinho de status — recolhido você
-// continua vendo as 4.
-let sidebarPinned = false;
-let sidebarHoverTimer = null;
-const SIDEBAR_HOVER_DELAY = 180; // evita abrir sem querer ao cruzar a trilha
+// TASK-UI-02 — André: "ainda vamos manter o slider?" — não. A "trilha que
+// expande" (v0.9.17, opção B) abria a barra sozinha ao passar o mouse, o
+// que virou o próprio "slider" que ele queria tirar. Trocado por um popover
+// simples ancorado no 📌 (mesma ideia do #zoomPopover): só abre por clique,
+// só fecha por clique (no próprio 📌 ou fora do popover) — nunca sozinho ao
+// cruzar a trilha, e nunca redimensiona #mainArea (ver CSS, #sidebar virou
+// position:fixed).
+let sidebarOpen = false;
 
 function setSidebarOpen(open) {
+  sidebarOpen = open;
   appEl.classList.toggle("sidebarCollapsed", !open);
+  railPinBtn.classList.toggle("on", open);
 }
 
-function openSidebarSoon() {
-  clearTimeout(sidebarHoverTimer);
-  sidebarHoverTimer = setTimeout(() => setSidebarOpen(true), SIDEBAR_HOVER_DELAY);
-}
-
-function closeSidebarIfIdle() {
-  clearTimeout(sidebarHoverTimer);
-  if (sidebarPinned) return;
-  // Não recolhe por baixo de quem está digitando (renomear conta, campos da
-  // automação, barra de URL) — o campo continuaria com foco num painel
-  // invisível.
-  const el = document.activeElement;
-  if (el && sidebarEl.contains(el) && (el.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName))) {
-    return;
-  }
+railPinBtn.title = "Contas";
+railPinBtn.addEventListener("click", () => setSidebarOpen(!sidebarOpen));
+document.addEventListener("mousedown", (e) => {
+  if (!sidebarOpen) return;
+  if (sidebarEl.contains(e.target) || railPinBtn.contains(e.target)) return;
   setSidebarOpen(false);
-}
-
-function wireSidebarHover(el) {
-  el.addEventListener("mouseenter", openSidebarSoon);
-  el.addEventListener("mouseleave", (e) => {
-    // Passar da trilha pra barra (ou vice-versa) não conta como sair.
-    const to = e.relatedTarget;
-    if (to && (railEl.contains(to) || sidebarEl.contains(to))) return;
-    closeSidebarIfIdle();
-  });
-}
-wireSidebarHover(railEl);
-wireSidebarHover(sidebarEl);
-
-function setSidebarPinned(pinned) {
-  sidebarPinned = pinned;
-  railPinBtn.classList.toggle("on", pinned);
-  railPinBtn.title = pinned ? "Desafixar o menu (volta a abrir só no hover)" : "Fixar o menu aberto";
-  savePref("sidebarPinned", pinned ? "1" : "0");
-  if (pinned) setSidebarOpen(true);
-  else closeSidebarIfIdle();
-}
-railPinBtn.addEventListener("click", () => setSidebarPinned(!sidebarPinned));
+});
 
 // Contas na trilha: inicial + cor da conta + pontinho de status, clicáveis.
-// ---------- v0.9.17 — painel do bot destacável (opção C da proposta) ----------
-// O #automationPanel é MOVIDO entre a barra lateral e o card flutuante, nunca
-// duplicado: assim todos os campos, listeners e o `syncAutomationPanel()` que
-// já existem continuam funcionando sem nenhuma alteração.
-let botDetached = false;
-
-// As coordenadas são relativas ao #mainArea (o ancestral posicionado), mas o
-// card não pode subir por cima da barra de ferramentas — daí o piso ser o
-// topo do container das contas, não o topo do #mainArea.
-function clampFloatPosition(x, y) {
-  const host = mainAreaEl.getBoundingClientRect();
-  const w = botFloatEl.offsetWidth || 268;
-  const minY = containerEl.offsetTop + 6;
-  return {
-    x: Math.max(6, Math.min(x, Math.max(6, host.width - w - 6))),
-    y: Math.max(minY, Math.min(y, Math.max(minY, host.height - 44))),
-  };
-}
-
-function applyFloatPosition(x, y) {
-  const p = clampFloatPosition(x, y);
-  botFloatEl.style.left = p.x + "px";
-  botFloatEl.style.top = p.y + "px";
-  savePref("botFloatPos", JSON.stringify(p));
-}
-
-function detachBotPanel() {
-  if (botDetached) return;
-  botDetached = true;
-  botFloatBodyEl.appendChild(automationPanelEl);
-  automationPanelEl.hidden = false;
-  botFloatEl.hidden = false;
-  // A barra lateral volta pra lista de contas — é isso que dá o ganho:
-  // contas encaixadas de um lado, bot flutuando sobre o jogo do outro.
-  accountsGroupEl.hidden = false;
-  let pos = null;
-  try {
-    const saved = JSON.parse(loadPref("botFloatPos", "") || "null");
-    if (saved && typeof saved.x === "number") pos = saved;
-  } catch (err) {
-    pos = null;
-  }
-  if (!pos) {
-    // Padrão: canto superior direito da área do jogo.
-    const host = mainAreaEl.getBoundingClientRect();
-    pos = { x: Math.max(6, host.width - 290), y: containerEl.offsetTop + 10 };
-  }
-  applyFloatPosition(pos.x, pos.y);
-  savePref("botDetached", "1");
-  syncAutomationPanel();
-}
-
-function dockBotPanel() {
-  if (!botDetached) return;
-  botDetached = false;
-  botFloatEl.hidden = true;
-  // Volta pro lugar de origem na barra lateral (antes do painel de config).
-  sidebarEl.insertBefore(automationPanelEl, settingsPanelEl);
-  savePref("botDetached", "0");
-  // Encaixado, o painel só aparece quando a conta está selecionada.
-  if (selectedAutomationTabId) openAutomationPanel(selectedAutomationTabId);
-  else automationPanelEl.hidden = true;
-}
-
-botDetachBtn.addEventListener("click", detachBotPanel);
-botDockBtn.addEventListener("click", dockBotPanel);
-
-// Arrastar pela barrinha. `setPointerCapture` é o que faz o arrasto continuar
-// funcionando quando o cursor passa por cima do <webview> do jogo — sem isso
-// o guest engole os eventos e o card "gruda" no meio do caminho.
-let botDrag = null;
-botFloatBarEl.addEventListener("pointerdown", (e) => {
-  if (e.target === botDockBtn) return;
-  const r = botFloatEl.getBoundingClientRect();
-  const host = mainAreaEl.getBoundingClientRect();
-  botDrag = { dx: e.clientX - r.left, dy: e.clientY - r.top, hostX: host.left, hostY: host.top };
-  botFloatBarEl.setPointerCapture(e.pointerId);
-  botFloatBarEl.classList.add("dragging");
-});
-botFloatBarEl.addEventListener("pointermove", (e) => {
-  if (!botDrag) return;
-  applyFloatPosition(e.clientX - botDrag.hostX - botDrag.dx, e.clientY - botDrag.hostY - botDrag.dy);
-});
-const endBotDrag = () => {
-  botDrag = null;
-  botFloatBarEl.classList.remove("dragging");
-};
-botFloatBarEl.addEventListener("pointerup", endBotDrag);
-botFloatBarEl.addEventListener("pointercancel", endBotDrag);
-// Redimensionar a janela pode deixar o card fora da área visível.
-window.addEventListener("resize", () => {
-  if (!botDetached) return;
-  applyFloatPosition(parseFloat(botFloatEl.style.left) || 0, parseFloat(botFloatEl.style.top) || 0);
-});
-
-// ---------- TASK-UI-01 — protótipo: workspace central ----------
-// Mesmo princípio do destacar/encaixar logo acima: #automationPanel e
-// #settingsPanel são MOVIDOS (appendChild), nunca duplicados, entre a
-// lateral e o overlay central — todos os campos, listeners e o
-// syncAutomationPanel()/syncSettingsPanel() que já existem continuam
-// funcionando sem nenhuma alteração, só muda o endereço no DOM. Opt-in,
-// desligado por padrão: com o toggle desmarcado, isWorkspacePrototypeOn()
-// é sempre false e openAutomationPanel/openSettingsPanel/closeAutomationPanel/
-// closeSettingsPanel (acima) se comportam exatamente como antes desta tarefa.
+// ---------- TASK-UI-02 — workspace central (agora o único modo) ----------
+// #automationPanel e #settingsPanel são MOVIDOS (appendChild), nunca
+// duplicados, entre a lateral e o overlay central — todos os campos,
+// listeners e o syncAutomationPanel()/syncSettingsPanel() que já existem
+// continuam funcionando sem nenhuma alteração, só muda o endereço no DOM.
+// Era opt-in (TASK-UI-01, protótipo); André aprovou e virou o único
+// comportamento — o toggle saiu (ver CHANGELOG).
+// TASK-UI-07 — André: "esse botão Destacar também não faz mais sentido,
+// pode retirar". Fazia sentido só enquanto Automação vivia espremida na
+// lateral estreita — hoje o workspace central já resolve exatamente o
+// mesmo problema (ver o jogo por trás, mover o painel — TASK-UI-05), então
+// o card flutuante (`#botFloat`, `detachBotPanel`/`dockBotPanel`,
+// `botDetached`) inteiro saiu: botão, HTML e JS.
 const centralWorkspaceEl = document.getElementById("centralWorkspace");
+const workspaceCardEl = document.getElementById("workspaceCard");
+const workspaceHeaderEl = document.getElementById("workspaceHeader");
 const workspaceBodyEl = document.getElementById("workspaceBody");
 const workspaceTituloEl = document.getElementById("workspaceTitulo");
 const workspaceFecharBtn = document.getElementById("workspaceFecharBtn");
 const workspaceSwitchAutomacaoBtn = document.getElementById("workspaceSwitchAutomacao");
 const workspaceSwitchConfigBtn = document.getElementById("workspaceSwitchConfig");
-const workspacePrototypeToggle = document.getElementById("workspacePrototypeToggle");
 
-let workspacePrototypeEnabled = loadPref("workspacePrototype", "0") === "1";
 let workspaceOpenKind = null; // "automacao" | "config" | null — qual painel está no overlay agora
-
-// Destacado (botDetached) já usa o mesmo mecanismo de mover o
-// #automationPanel pra outro container flutuante — os dois nunca disputam o
-// mesmo nó ao mesmo tempo porque o workspace só age quando NÃO está
-// destacado (o botão "Destacar" fica desabilitado enquanto o protótipo está
-// ligado, ver abaixo).
-function isWorkspacePrototypeOn() {
-  return workspacePrototypeEnabled && !botDetached;
-}
 
 function syncWorkspaceSwitch() {
   if (!workspaceSwitchAutomacaoBtn || !workspaceSwitchConfigBtn) return;
@@ -3918,6 +3831,7 @@ function moveIntoWorkspace(kind) {
   workspaceTituloEl.textContent = kind === "automacao" ? "Automação" : "Configurações";
   workspaceBodyEl.appendChild(el);
   centralWorkspaceEl.hidden = false;
+  centerWorkspaceIfNeeded();
   workspaceOpenKind = kind;
   syncWorkspaceSwitch();
 }
@@ -3937,25 +3851,75 @@ function closeCentralWorkspace() {
   else if (workspaceOpenKind === "config") closeSettingsPanel();
 }
 
-if (workspacePrototypeToggle) {
-  workspacePrototypeToggle.checked = workspacePrototypeEnabled;
-  if (botDetachBtn) botDetachBtn.disabled = workspacePrototypeEnabled;
-  workspacePrototypeToggle.addEventListener("change", () => {
-    workspacePrototypeEnabled = workspacePrototypeToggle.checked;
-    savePref("workspacePrototype", workspacePrototypeEnabled ? "1" : "0");
-    // Desligou com o workspace aberto: fecha e devolve o painel pra lateral
-    // (nunca deixa o protótipo desligado com um nó "preso" no overlay).
-    if (!workspacePrototypeEnabled && workspaceOpenKind) closeCentralWorkspace();
-    if (botDetachBtn) botDetachBtn.disabled = workspacePrototypeEnabled;
-  });
-}
-
 if (workspaceFecharBtn) workspaceFecharBtn.addEventListener("click", closeCentralWorkspace);
-if (centralWorkspaceEl) {
-  centralWorkspaceEl.addEventListener("click", (e) => {
-    if (e.target === centralWorkspaceEl) closeCentralWorkspace();
-  });
+
+// TASK-UI-05 — arrastar o card pela própria barra do cabeçalho. Mesma
+// técnica do antigo card "Destacar" (clampFloatPosition/applyFloatPosition,
+// acima): setPointerCapture é o que faz o arrasto continuar funcionando
+// quando o cursor passa por cima do <webview> do jogo — sem isso o guest
+// engole os eventos e o card "gruda" no meio do caminho. Clampado dentro de
+// #mainArea (não pode subir por cima da trilha de ícones/lateral).
+function clampWorkspacePosition(x, y) {
+  const host = mainAreaEl.getBoundingClientRect();
+  const w = workspaceCardEl.offsetWidth || 960;
+  const h = workspaceCardEl.offsetHeight || 780;
+  return {
+    x: Math.max(0, Math.min(x, Math.max(0, host.width - w))),
+    y: Math.max(0, Math.min(y, Math.max(0, host.height - h))),
+  };
 }
+function applyWorkspacePosition(x, y) {
+  const p = clampWorkspacePosition(x, y);
+  workspaceCardEl.style.left = p.x + "px";
+  workspaceCardEl.style.top = p.y + "px";
+  savePref("workspaceCardPos", JSON.stringify(p));
+}
+// Só posiciona na primeira vez que abre nesta sessão (style.left ainda
+// vazio) — arrastar uma vez deve manter o lugar nas aberturas seguintes,
+// não voltar a centralizar a cada clique em Automação/Configurações.
+function centerWorkspaceIfNeeded() {
+  if (workspaceCardEl.style.left) return;
+  let pos = null;
+  try {
+    const saved = JSON.parse(loadPref("workspaceCardPos", "") || "null");
+    if (saved && typeof saved.x === "number") pos = saved;
+  } catch (err) {
+    pos = null;
+  }
+  if (!pos) {
+    const host = mainAreaEl.getBoundingClientRect();
+    const w = Math.min(960, host.width * 0.94);
+    const h = Math.min(780, host.height * 0.92);
+    pos = { x: Math.max(0, (host.width - w) / 2), y: Math.max(0, (host.height - h) / 2) };
+  }
+  applyWorkspacePosition(pos.x, pos.y);
+}
+let workspaceDrag = null;
+if (workspaceHeaderEl) {
+  workspaceHeaderEl.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".workspaceHeaderActions")) return;
+    const r = workspaceCardEl.getBoundingClientRect();
+    const host = mainAreaEl.getBoundingClientRect();
+    workspaceDrag = { dx: e.clientX - r.left, dy: e.clientY - r.top, hostX: host.left, hostY: host.top };
+    workspaceHeaderEl.setPointerCapture(e.pointerId);
+    workspaceHeaderEl.classList.add("dragging");
+  });
+  workspaceHeaderEl.addEventListener("pointermove", (e) => {
+    if (!workspaceDrag) return;
+    applyWorkspacePosition(e.clientX - workspaceDrag.hostX - workspaceDrag.dx, e.clientY - workspaceDrag.hostY - workspaceDrag.dy);
+  });
+  const endWorkspaceDrag = () => {
+    workspaceDrag = null;
+    workspaceHeaderEl.classList.remove("dragging");
+  };
+  workspaceHeaderEl.addEventListener("pointerup", endWorkspaceDrag);
+  workspaceHeaderEl.addEventListener("pointercancel", endWorkspaceDrag);
+}
+window.addEventListener("resize", () => {
+  if (!centralWorkspaceEl || centralWorkspaceEl.hidden) return;
+  applyWorkspacePosition(parseFloat(workspaceCardEl.style.left) || 0, parseFloat(workspaceCardEl.style.top) || 0);
+});
+
 if (workspaceSwitchAutomacaoBtn) {
   workspaceSwitchAutomacaoBtn.addEventListener("click", () => {
     if (!activeTabId) return;
@@ -3985,7 +3949,16 @@ function renderRailAccounts() {
     btn.innerHTML = `
       <span class="railAcctAv" style="background:${avatarColorFor(tab.id)}">${escapeHtml((tab.label.trim()[0] || "?").toUpperCase())}</span>
       <span class="railAcctDot ${cls}"></span>`;
-    btn.addEventListener("click", () => setActiveTab(tab.id));
+    // TASK-UI-05 — André: "poderia ter uma opção de fazer um switch entre
+    // os personagens para ver a configuração" sem fechar o modal. Com o
+    // painel de Automação aberto, clicar noutra conta na trilha troca a
+    // conta mostrada nele (openAutomationPanel já troca a aba ativa
+    // também); sem o painel aberto (ou com Configurações, que não é por
+    // conta), continua só trocando a aba ativa como sempre.
+    btn.addEventListener("click", () => {
+      if (workspaceOpenKind === "automacao") openAutomationPanel(tab.id);
+      else setActiveTab(tab.id);
+    });
     railAccountsEl.appendChild(btn);
   });
   railAccountsDivider.hidden = tabs.length === 0;
@@ -4116,7 +4089,7 @@ initVisualIdentity();
 // .tabBtn ativa ele e mostra o .tabPanel de mesmo data-tab, esconde os
 // outros. Não precisa persistir entre sessões — sempre abre na primeira
 // aba, igual o protótipo.
-function wireTabBar(barEl, panelsContainerEl) {
+function wireTabBar(barEl, panelsContainerEl, onChange) {
   const buttons = Array.from(barEl.querySelectorAll(".tabBtn"));
   const panels = Array.from(panelsContainerEl.querySelectorAll(".tabPanel"));
   buttons.forEach((btn) => {
@@ -4126,6 +4099,7 @@ function wireTabBar(barEl, panelsContainerEl) {
       panels.forEach((p) => {
         p.hidden = p.dataset.tab !== key;
       });
+      if (onChange) onChange(key);
     });
   });
 }
@@ -4133,7 +4107,16 @@ function wireTabBar(barEl, panelsContainerEl) {
 // ele liga), então aparece/some junto com a aba sem nenhum JS extra. A v0.9.29
 // escondia o botão por fora do painel, e isso empurrava a barra de abas pra
 // cima e pra baixo a cada troca de aba.
-wireTabBar(document.getElementById("automationTabBar"), document.querySelector("#automationPanel .automationScroll"));
+// TASK-UI-06 — desde que o botão foi pro cabeçalho (TASK-UI-03), esse
+// "aparece/some sozinho" deixou de ser de graça — o cabeçalho é comum a
+// todas as abas, então precisa de um hook explícito (onChange) pra saber
+// qual dos dois botões (Caçada/Bestiário) mostrar a cada troca de aba.
+function syncHeaderAutoToggle(key) {
+  const ativa = key || (document.querySelector("#automationTabBar .tabBtn.active") || {}).dataset?.tab || "cacada";
+  automationToggleBtn.hidden = ativa !== "cacada";
+  if (bestiaryToggleBtn) bestiaryToggleBtn.hidden = ativa !== "bestiary";
+}
+wireTabBar(document.getElementById("automationTabBar"), document.querySelector("#automationPanel .automationScroll"), syncHeaderAutoToggle);
 wireTabBar(document.getElementById("settingsTabBar"), document.querySelector("#settingsPanel .automationScroll"));
 
 statusPill.textContent = "";
@@ -4442,13 +4425,9 @@ async function init() {
     : null;
   gridMode = loadPref("gridMode", "0") === "1";
   railGridBtn.classList.toggle("on", gridMode);
-  // v0.9.17 — o antigo "sidebarCollapsed" deu lugar ao "sidebarPinned":
-  // recolhido virou o padrão (a trilha É o estado recolhido), e o que se
-  // guarda agora é se ele fixou o menu aberto.
-  setSidebarPinned(loadPref("sidebarPinned", "0") === "1");
-  if (!sidebarPinned) setSidebarOpen(false);
-  // v0.9.17 — o painel do bot volta destacado se foi assim que ele deixou.
-  if (loadPref("botDetached", "0") === "1") detachBotPanel();
+  // TASK-UI-02 — popover de contas sempre começa fechado (sem hover, sem
+  // "fixar" — só abre quando alguém clica no 📌).
+  setSidebarOpen(false);
   const tabsListCollapsed = loadPref("tabsListCollapsed", "0") === "1";
   tabsEl.classList.toggle("collapsed", tabsListCollapsed);
   groupHeaderToggle.classList.toggle("collapsed", tabsListCollapsed);

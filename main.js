@@ -1169,6 +1169,36 @@ ipcMain.handle("diag:saveToProject", async (_event, { filename, content } = {}) 
   }
 });
 
+// v0.13.4 — gravação CONTÍNUA do log do protocolo (ver diagStream* em
+// content-injected.js): em vez de o log inteiro ir de uma vez só no fim (e o
+// anel em memória esquecer tudo além das últimas ~4.000 mensagens), chegam
+// pedaços de ~2s que são ACRESCENTADOS ao mesmo arquivo em `logs/`. Mesmas
+// regras do `diag:saveToProject` acima (só dev, nome saneado, preso em
+// `logs/`). Os pedaços passam por uma fila única: `ipcMain.handle` assíncrono
+// pode rodar dois handlers ao mesmo tempo, e dois `appendFile` concorrentes no
+// mesmo arquivo poderiam gravar fora de ordem — num log cuja graça é a ordem
+// das mensagens, isso estragaria tudo em silêncio.
+let filaDiagAppend = Promise.resolve();
+ipcMain.handle("diag:appendToProject", (_event, { filename, content } = {}) => {
+  if (app.isPackaged) return { ok: false, motivo: "build instalado — só grava em desenvolvimento" };
+  if (typeof filename !== "string" || !filename || typeof content !== "string") {
+    return { ok: false, motivo: "filename/content inválidos" };
+  }
+  const nomeSeguro = path.basename(filename).replace(/[^\w.-]+/g, "-");
+  if (!nomeSeguro) return { ok: false, motivo: "nome de arquivo vazio depois de sanear" };
+  const trabalho = filaDiagAppend.then(async () => {
+    try {
+      await fs.mkdir(LOGS_DIR, { recursive: true });
+      await fs.appendFile(path.join(LOGS_DIR, nomeSeguro), content, "utf8");
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, motivo: (err && err.message) || String(err) };
+    }
+  });
+  filaDiagAppend = trabalho.then(() => {}, () => {});
+  return trabalho;
+});
+
 // ---------- atualização automática (v0.6.0) ----------
 //
 // André queria compartilhar o app com um amigo sem precisar ficar mandando

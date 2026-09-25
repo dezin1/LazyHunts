@@ -1,5 +1,217 @@
 # Changelog
 
+## 0.13.4-spawn.5 — 2026-09-24 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `spawn`.
+
+### Correção: renovar a caçada por spawn seco agora vende o loot antes de voltar
+
+Ao sair por spawn seco o personagem passa pela cidade e reentrava direto (`leaveHunt()` → `ensureHunting()`), voltando com a bag cheia. A venda só existia no ciclo de capacidade e no tick "cheguei na cidade", que nunca chegava a rodar porque o personagem já tinha reentrado.
+
+Agora, depois de sair: **vende (Venda rápida) → confere a stamina → reentra**. Detalhes:
+- Respeita a opção "vender ao chegar na cidade" (`autoSellOnCityArrival`); desligada, o comportamento é o de antes.
+- Falha na venda (botão desabilitado, confirmação que não aparece) não impede a renovação: loga e segue.
+- Bag vazia: o log diz "não há nada pra vender" e reentra normalmente.
+- Sem stamina para reentrar (ou stamina de rodízio): passa a vez ou espera, igual a quem vendeu por capacidade, em vez de tentar entrar e ser recusado.
+- Desligar a automação no meio da venda cancela a reentrada.
+
+Custo: alguns segundos a mais na cidade a cada renovação (o tempo da venda). Teste novo: `scripts/teste-spawn-seco-vende.mjs` (ordem sair → vender → reentrar e fiação sobre o código real; o fluxo completo só se valida no jogo).
+
+## 0.13.4-spawn.4 — 2026-09-24 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `spawn`.
+
+### Correção: o rodízio de personagens trocava com 0 de stamina e travava quem saía com menos de 5 min
+
+O jogo **não deixa entrar em caçada com menos de 5 min de stamina**. Um personagem que saía com 4 min ficava travado: o bot tentava reentrar, o jogo recusava, e o rodízio nunca era chamado. Causa: o rodízio só rodava quando `hasEnoughStaminaToHunt` devolvia `false`, e com "Esperar a stamina encher" desligado essa função valia `stamina > 0` — 4 min "tinha stamina".
+
+Agora:
+- **Troca com 10 min de stamina** (padrão `rotateMinStaminaMinutes: 10`, e o mínimo aceito; a configuração antiga de 5 é lida como 10).
+- **Saída proativa**: com o rodízio ligado (modo Solo) e a stamina em 10 min ou menos, o personagem **sai da caçada** na hora (mesmo `leaveHunt()` de sempre; o tick seguinte vende e chama o rodízio) — não espera a stamina zerar nem o jogo expulsá-lo. Só sai se ainda houver quem assuma (`rotationsWithoutHunt < tamanho da fila`).
+- **Mínimo do jogo (5 min) vale sempre**, com ou sem "esperar stamina": `hasEnoughStaminaToHunt` nunca devolve `true` abaixo disso, então quem está na cidade com 4 min não tenta entrar (troca de personagem ou espera). Limiar de espera ausente/inválido não vira `NaN`.
+- **Modo em grupo** não muda (o líder não pode trocar): só respeita o mínimo do jogo.
+- Stamina ilegível: nunca troca nem trava.
+
+Teste novo: `scripts/teste-rodizio-stamina.mjs` (inclui rodar a função ANTIGA do `git HEAD` no cenário do relato e mostrar que ela dizia `true`).
+
+### Correção: spawn seco não disparava depois de uma reconexão na mesma instância
+
+Achado na caçada de Skeleton do log `bauj`: o socket caiu no meio da caçada, o servidor reenviou o `54` da MESMA instância e um `15` só com o personagem. O detector guardava as criaturas antigas em `vivos` (fantasmas), o mapa "nunca esvaziava" e o spawn seco não disparava naquela caçada. Agora um `54` repetido (e o socket `conectando`) chama `spawnRessincronizar()`: zera `vivos` e recomeça o relógio de "sem nascer", o piso de tempo e os tiles a partir daquele instante (não dispara na hora — espera o mínimo). Replay no log real: antes não disparava; agora dispara 15,5 s depois da reconexão, sem cortar caçada viva.
+
+## 0.13.4-spawn.3 — 2026-09-24 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `spawn`.
+
+### Spawn seco: piso de tempo aprendido por caçada (8-15s)
+
+Continuação da medição de 590s (Giant Spider, Dragon, 3× Mummy): depois da `.1`, o que manda na saída é o piso de tempo de 15s do critério de tiles (Giant Spider 17,0s, Mummy 15,9s e 15,8s depois de limpar). Ele é seguro em todas as caçadas medidas (o maior "mapa vazio e ainda vem bicho" foi 11,4s, na Mummy), mas folgado onde a caçada nunca fica vazia por muito tempo (Giant Spider, Hero e Troll: no máximo 3-4s).
+
+Agora o app mede, por caçada (`scenarioId`, guardado em disco como os outros perfis), **quanto tempo o mapa ficou vazio e mesmo assim veio mais bicho**. O piso de tempo do critério de tiles passa a ser `2 × o maior desses vazios`, **nunca abaixo de 8s e nunca acima dos 15s de sempre**, e só depois de 8+ medições — antes disso continua 15s. O vazio que NÃO termina em nascimento (a caçada secou de vez) nunca vira amostra: é justamente o que o detector procura.
+
+Medido no log real: Giant Spider repetido em 2 voltas (como o app faz ao renovar): **1ª volta 15,2s → 2ª volta 8,4s** sem matar até sair (o piso fixo dava 15,2s e 15,4s). Mummy fica em 15s (o maior vazio dela, 11,4s, × 2 estoura o teto de 15s). Nenhum corte: o invariante "depois do disparo não nasceu mais bicho nessa instância" segue valendo nas gravações reais e na 2ª volta. O painel mostra o piso em uso e quantos vazios já foram medidos (`≥8s sem matar [12/8 vazios medidos]`).
+
+### Limpeza
+Apagados de `logs/` o `swag-proto-conta-…T03-27-13.tsv` (17 MB, misturado, resto do bug da `.1`) e um fragmento de 48s de uma reabertura do app.
+
+## 0.13.4-spawn.2 — 2026-09-24 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `spawn`.
+
+### Correção: a gravação em disco misturava as contas (achado no primeiro teste real)
+
+Olhando os arquivos gerados na `.1`: `swag-proto-conta-…T03-27-13.tsv` tinha **3 cabeçalhos, personagem `null` e 233 voltas de relógio** — três contas gravando no MESMO arquivo, com as mensagens misturadas (e 11 MB em poucos minutos de contas paradas). Duas causas, as duas minhas:
+1. **O interruptor do log fica salvo (`diagEnabled`) e religa sozinho ao abrir o app** — e na `.1` isso passou a abrir arquivo em disco em TODAS as contas no boot. Agora a restauração liga só o anel em memória, como sempre foi; arquivo só nasce de um clique explícito no interruptor.
+2. **Nome do arquivo colidia**: contas ligando no mesmo segundo, ainda sem nome de personagem (`conta`), davam o mesmo nome. Agora o nome leva um sufixo aleatório.
+
+O arquivo do log que estava sendo gravado com clique explícito (`swag-proto-Dezin-Zemsta-…T03-28-11.tsv`) estava íntegro: 1 cabeçalho, 0 voltas de relógio. Testes novos em `teste-diag-stream.mjs` (40 contas no mesmo segundo → 40 nomes; restauração não grava em disco).
+
+### Primeira medição real do spawn seco (sessão de 590s: Giant Spider, Dragon, 3× Mummy)
+
+Rodando a `0.13.4-spawn.1` de verdade: **Giant Spider saiu 17,0s depois de limpar o mapa; as duas Mummy completas, 15,9s e 15,8s** — o piso de 15s do critério de tiles é agora o que manda, em vez do limiar aprendido inflado. **Dragon não seca** (20 ondas em 236s) e o detector não disparou; a saída dele foi por outro motivo (ainda havia 1 criatura viva). O replay do detector real reproduz esses tempos com 1s de diferença (Giant Spider 97,4s vs 98,8s reais; Mummy 68,0s/64,3s vs 68,7s/65,0s), e ganhou o invariante que mede o custo: **nenhum dos 7 disparos, em 5 logs e 13 caçadas, cortou uma caçada que ainda ia nascer bicho**. O maior tempo com o mapa vazio e ainda vindo mais bicho nesta sessão foi 11,4s (Mummy), então o piso de 15s tem ~3,6s de folga — abaixar mais arrisca cortar onda.
+
+## 0.13.4-spawn.1 — 2026-09-24 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Novo ciclo — detector de spawn seco e log do protocolo (o `Grimório` fecha na `.7`).
+
+### Log do protocolo: gravação contínua em disco, sem limite de janela
+
+André: "o objetivo do log é ser rico e ter detalhes". O log guardava só as últimas 4.000 mensagens em memória (~100s): numa captura de 25 minutos com várias caçadas, só a última tinha nascimento/morte por criatura — as outras seis só dava pra estimar. Agora, com o log ligado, cada mensagem também é acrescentada a um arquivo em `logs/` (`swag-proto-<personagem>-<data>.tsv`, uma mensagem por linha: `t_ms<TAB>tipo<TAB>texto`), **tudo, sem filtro de tipo e sem janela**. Em memória só fica o que chegou nos últimos 2s (a razão do teto antigo era travar a máquina, v0.12.1). O processo principal acrescenta os pedaços numa fila única (`diag:appendToProject`), então a ordem das mensagens se mantém mesmo com pedaços concorrentes. Só em desenvolvimento, como o resto da pasta `logs/`; o "Baixar o log" continua entregando os anéis de sempre. O status na tela mostra o arquivo (ou avisa se a gravação em disco foi recusada).
+
+### Spawn seco: sai mais cedo sem sair antes da hora
+
+Medido em 4 logs reais (23/09) e no painel ao vivo do Swamp Troll, tempo parado depois da última morte até sair: 15-19s na maioria, **~30s no Vampire, ~33s no Spider, 78s no Dragon**. Três ajustes:
+1. **Teto de 64 no limiar de tiles.** O limiar é `p90 de tiles entre mortes × 8`; no Vampire o p90 foi 15 → limiar 120 tiles, que a ~6,8 passos/s são ~25s de andança: o critério virava um cronômetro escondido. Replay do log real: **28s → 15s** sem matar até sair. O piso de tempo de 15s (v0.11.42) continua valendo — o teto só corta o excesso.
+2. **Critério de lote: fator 3 → 2, piso 20s → 10s.** Maior silêncio saudável entre ondas medido: 7,4s (Troll), 16,1s (Hero), 17,6s (Vampire), ~23s (Swamp Troll). p90 × 2 fica acima de todos com folga (Hero: 32s vs 16s). No replay do Troll o critério agora sai 4s mais cedo.
+3. **O Spider (tiles não disparava, ~33s)** não se reproduz com o perfil só da janela do log (aí o tiles dispara aos 15s). A explicação mais provável é o mesmo mecanismo do Vampire: o perfil que o app aprendeu em sessões anteriores dava um limiar bem acima de 25. Não dá pra confirmar sem o painel daquele momento — o teto do item 1 cobre o caso de qualquer jeito, e a linha "Spawn esgotado: …" do Histórico agora termina com `[última morte há Ns]`, que é o número que mede o ganho.
+
+**Protegido contra falso positivo:** o replay do log do Hero (caçada que não seca; mapa vazio 4 vezes, onda seguinte 0,2–3,2s depois) **não dispara em nenhum momento**. Novos testes: `scripts/teste-spawn-seco-replay.mjs` (roda o `avaliarSpawnSeco` REAL contra os logs em `logs/`, ANTES × AGORA) e `scripts/teste-diag-stream.mjs` (60.000 mensagens sem perder nenhuma, cabeçalho sempre primeiro, ordem preservada no processo principal).
+
+### Aba Bestiário: alvo da entrada nova nasce em fase atual + 1 (teste que faltava)
+
+A correção do `0.13.3-grimorio.7` (alvo travado em 1 mesmo pra criatura já na fase 3) não tinha teste. Adicionado ao `teste-bestiary-catalogo.mjs` (fase 3 → alvo 4, fase 0 → 1, fase 1 → 2, catálogo sem progresso → 1). O mesmo teste quebrava desde que "Iniciar Bestiário" foi pro cabeçalho (`0.13.3-grimorio.4`) e eu não tinha rodado: corrigido (o botão agora é um elemento estático, o teste agora simula isso).
+
+## 0.13.3-grimorio.7 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `Grimório`.
+
+### Alvo da escada agora nasce calculado, não travado em 1
+
+André: "sempre que puxa um bicho novo para o bestiário ele continua da primeira fase, que é a 1 — deveria já vir calculado, qual está e qual é a próxima". Achado: `adicionarCacadaNaEscada()` (renderer.js) criava toda entrada nova com `faseAlvo: 1` fixo, não importa quantos abates a criatura já tivesse de sessões anteriores — uma criatura já na fase 3, por exemplo, nascia com alvo 1 (já "passado"). Causa raiz: o catálogo do modal "Adicionar caçadas" não carregava progresso nenhum (só nome/tier), então o host não tinha como calcular nada. Corrigido nos dois lados: `content-injected.js` agora manda `criaturasProgresso` (fase/abates já calculados, mesma fórmula que a escada já usa) junto com cada caçada do catálogo; `adicionarCacadaNaEscada()` usa isso pra travar o alvo em `faseAtual + 1` — mesmo piso que o stepper já aplicava depois de criada, agora também no momento de criar.
+
+### Cards da escada: mais respiro pra "concluída" não ficar apertada
+
+André pediu explicitamente pra só entregar quando estivesse bom — desta vez conferi ao vivo: recriei os cards reais (`renderer/styles.css` de verdade) num arquivo à parte e testei a largura mínima do grid (260px, 300px, 950px) no navegador antes de responder. A linha de ações (checkbox+"concluída", stepper, mover/remover) já cabia numa linha só nesses testes, mas 260px era o piso justo, sem folga pra variação de fonte entre motores de render. Subi o piso do grid pra 300px — mesmo valor que o resto do app (catálogo do Bestiário, outras abas) já usa — por margem de segurança.
+
+## 0.13.3-grimorio.6 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `Grimório`.
+
+### "Minha escada": cards lado a lado, quebrando linha sozinho
+
+André: "a ideia é ter os cards lado a lado no horizontal... quantos cabem, vem a quebra de linha e monta a próxima embaixo". A lista era uma coluna única (cada cardzinho empilhado por baixo do anterior, desperdiçando toda a largura). Virou grid (mesma técnica já usada no catálogo do Bestiário e nas outras abas: `auto-fit, minmax(260px,1fr)`) — cabe quantas colunas a largura permitir, sem breakpoint fixo: numa janela larga aparecem 3+ lado a lado, numa estreita cai pra 1 sozinho.
+
+## 0.13.3-grimorio.5 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `Grimório`.
+
+### Correção de raiz: `hidden` não escondia mais nada em vários botões
+
+A `.4` deixou "Ligar Caçada" e "Iniciar Bestiário" aparecendo os dois juntos no cabeçalho, e o "Destacar" continuava visível mesmo escondido via JS. Causa: CSS de autor sempre vence o `[hidden]{display:none}` da folha de estilo padrão do navegador, não importa a especificidade — qualquer classe com `display:flex`/`block` (`.autoToggleBtn`, `.detachBtn`) anula o atributo sozinha. Já tinha sido contornado uma vez só pro `#botFloat`; agora existe uma regra `[hidden]{display:none!important}` global, então `hidden` funciona em qualquer elemento do app daqui pra frente, sem precisar lembrar de repetir o patch.
+
+### Botões redundantes removidos: "Destacar" e os dois "‹ Contas"
+
+André, em sequência: "esse botão Destacar também não faz mais sentido, pode retirar" e "esse botão Contas também não serve mais, pq o botão ✕ já faz a mesma função". Os dois tinham razão de ser só quando Automação vivia espremida na lateral estreita (v0.9.17/v0.11.8) — hoje o workspace central (arrastável, não bloqueia o jogo) resolve o que "Destacar" resolvia, e o ✕ do workspace já chama exatamente as mesmas `closeAutomationPanel()`/`closeSettingsPanel()` que os dois "‹ Contas" chamavam. Removido o botão, o card flutuante inteiro (`#botFloat`, arrastar, `detachBotPanel`/`dockBotPanel`) e os dois "‹ Contas" (Automação e Configurações) — HTML e JS.
+
+### Aba Bestiário: card único, "+ Adicionar caçadas" no header do card
+
+Continuação do pedido "ainda ficou ruim... cardzinho com as informações, aproveite o espaço": "Auto Bestiary por caçada" e "Minha escada" eram dois cards que esticavam pra mesma altura — um ficava vazio (só tinha um hint, depois que o botão foi pro cabeçalho geral). Fundidos num card só: status/hint no topo de "Minha escada", que passa a ser o único card da aba (cheio de verdade, não só alto). "+ Adicionar caçadas" também saiu do bloco de largura cheia e virou um botão compacto na própria linha do título — "poderia estar no header", como pedido. Cada entrada da escada ganhou fundo e borda próprios (um "cardzinho" de verdade, recesso dentro do card maior) em vez de só texto solto separado por espaço.
+
+## 0.13.3-grimorio.4 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `Grimório`.
+
+### "Iniciar Bestiário" foi pro cabeçalho, no mesmo lugar de "Ligar/Desligar Caçada"
+
+André: o botão deveria aparecer "no mesmo local de Desligar Caçada". Caçada normal e Auto Bestiary são mutuamente exclusivos pra uma conta, então só um botão de ação faz sentido no cabeçalho por vez — agora é o que a aba selecionada decide: aba Caçada mostra "Ligar/Desligar Caçada", aba Bestiário mostra "Iniciar/Pausar Bestiário", qualquer outra aba (Rotina, Treino, Guild, Análise, Party, Histórico) não mostra nenhum dos dois. A troca acontece ao clicar na aba (`syncHeaderAutoToggle`, `renderer.js`) — nenhuma lógica de start/pause mudou, só o endereço do botão no DOM (mesma ideia da correção do botão da Caçada, TASK-UI-03).
+
+### Cartões da aba Bestiário: fundo de verdade + "Minha escada" usa o espaço todo
+
+André: "MINHA ESCADA] poderia aparecer no padrão de card, e utilizar todo o espaço disponível". Dois problemas separados:
+- **Fundo do cartão era idêntico ao da própria página** (`--bg-inset`, pensado pra campo recesso tipo input, por coincidência tem o mesmo valor de `--bg-app`) — sobrava só uma borda de 8% de opacidade pra separar, que na prática quase não separa nada. Trocado por `--bg-sidebar` (um tom mais claro, o certo pra algo "elevado"), tanto nesses cartões quanto no card da aba Caçada (mesmo ajuste, mesma causa).
+- **O grid da aba tinha `align-content:start`**, então os cartões ficavam do tamanho do próprio conteúdo (curto) com um vão vazio embaixo até o fim do modal. Só a aba Bestiário ganhou `align-content:stretch` (as outras — Rotina, Treino etc., com vários cards curtos — continuam com `start`, esticá-los ficaria estranho); "Minha escada" virou coluna flex por dentro, com a lista tomando o espaço sobrando e rolando por conta própria em vez de crescer o modal inteiro.
+
+## 0.13.3-grimorio.3 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `Grimório`.
+
+### Correção de verdade da escada do Auto Bestiary — a da `.2` não tinha ficado boa
+
+André: "ainda não ficou bom" — a correção anterior juntou tier, abates, concluída, stepper e mover/remover numa única linha com `flex-wrap`; tecnicamente parava de vazar, mas 5 grupos numa linha só quebravam de um jeito confuso (o rótulo "concluída" isolado, longe do próprio checkbox). Voltou a ser 2 linhas curtas — a divisão original (de antes de qualquer correção) já fazia sentido, só faltava o `flex-wrap` como rede de segurança contra o vazamento: **linha 1** (só leitura) = tier + abates; **linha 2** (só ação) = concluída à esquerda, stepper + mover/remover à direita. No máximo 2 grupos por linha, cada uma agora tolera ficar estreita sem estourar.
+
+## 0.13.3-grimorio.2 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `Grimório`.
+
+### Correção: "concluída" cortada/vazando pra fora do card no Auto Bestiary
+
+André reconheceu o "C" cortado que já tinha sido visto meses atrás numa tela antiga do jogo: era a mesma coisa, só que agora no nosso próprio app — o texto "concluída" (ao lado do checkbox, em cada linha da escada) vazando pra fora do card, por cima do jogo. Causa: `.bestiaryLadderRowMeta`/`...RowActions` eram flex `justify-content:space-between` com filhos `white-space:nowrap` — um flex item sem `min-width:0` nunca encolhe abaixo do tamanho do próprio texto, então numa coluna estreita ele simplesmente transborda pra fora do card em vez de quebrar ou truncar. Corrigido reunindo tier + abates + concluída + stepper + mover/remover numa única linha com `flex-wrap:wrap`: cabe tudo lado a lado quando há espaço, e quebra pra próxima linha (nunca estoura) quando não há. Efeito colateral bom: cada entrada da escada ocupa bem menos altura agora (eram até 4 linhas separadas, viraram 1).
+
+### Workspace central: não bloqueia mais o jogo, e agora é arrastável
+
+André: "o modal fica isolando o jogo embaixo, não sendo possível interagir com o jogo, e o modal poderia ser movimentado". O overlay (`#centralWorkspace`) não escurece mais a tela nem intercepta clique nenhum — só o card em si recebe interação; o jogo por baixo continua jogável com o painel de Automação/Configurações aberto. O card virou arrastável pela própria barra do título, mesma técnica (`setPointerCapture`) do antigo card "Destacar" (que funcionava até por cima do `<webview>` do jogo, sem "grudar"). Posição lembrada entre aberturas (`localStorage`), como já acontecia com o "Destacar".
+
+### Trocar de conta sem fechar o painel de Automação
+
+André: "poderia ter alguma opção de fazer um switch entre os personagens para ver a configuração". A trilha de contas já ficava visível com o painel aberto (nunca escondida) — só que clicar numa conta ali só trocava qual webview está em primeiro plano, sem atualizar o painel de Automação, que continuava mostrando a conta anterior. Agora, com o painel de Automação aberto, clicar em outra conta na trilha troca também qual conta o painel mostra — sem passar por "‹ Contas" pra fechar e reabrir.
+
+## 0.13.3-grimorio.1 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Novo ciclo — identidade visual "Grimório" (a `ui` cuidava só de estrutura/IA; este cuida de cor, tipografia e composição).
+
+### Nova identidade visual: "Grimório" (tinta + pergaminho + lacre de cera)
+
+André pediu uma proposta visual de verdade — "está muito seco" — e recusou a ideia de eu adivinhar sozinho: montei 3 direções de fantasia sombria num protótipo vivo (Grimório/Forja/Runa) e ele escolheu **Grimório**. Aplicado nos tokens de cor (`:root` em `styles.css`, tema escuro e claro): fundo passa de preto-esverdeado (`#12140F`) pra tinta quase preta com tom de pergaminho queimado (`#16110B`); a cor de destaque (`--accent`) sai do verde-sálvia (`#6FA890`) pro dourado envelhecido (`#C9A227`); texto vira creme-pergaminho; `--success` vira um verde-musgo/pátina discreto (`#6B8A52`, resolve de vez a queixa antiga do verde "chamativo"); `--danger` vira vermelho-lacre (`#A13A3A`). Fonte de título (marca "Swag", nome da conta, títulos do workspace) trocou de Fraunces pra **Cinzel** — mais clássica/RPG. Como é tudo por token (`var(--accent)` etc.), a troca vale pro app inteiro sem precisar tocar em cada tela.
+
+### Layout: "ação na cabeça" na aba Caçada
+
+André, sobre o resultado anterior: "o que me incomoda não é a UI, é o layout... posicionamento de botão, tamanho, preenchimento". Escolhida entre duas propostas (a outra era o botão virar um card do mesmo tamanho que os outros): o botão "Ligar/Desligar Caçada" sai do corpo da aba e vira uma ação compacta no cabeçalho da conta, do tamanho normal de um botão, ao lado do nome/status — nunca mais uma barra de largura cheia disputando espaço com os cartões de configuração. As duas seções antigas ("Modo de caçada" e "Caçada/tier/capacidade") viram um card único e mais denso: rótulo à esquerda, controle à direita, uma linha por configuração — menos caixa vazia, mais informação visível de uma vez. Nenhum id/select/input mudou — só a moldura ao redor.
+
+## 0.13.2-ui.4 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `ui`.
+
+### Correção de verdade do botão "Ligar/Desligar Caçada" (a da `.3` era incompleta)
+
+André pegou no ato: "vc disse que diminuiu o botão, mas o resto? fica deslocado?" — sim, ficava. A correção anterior (`align-self:start`) só endireitava a altura do BOTÃO; a altura da LINHA do grid continuava igual à do vizinho mais alto ("Modo de caçada"), sobrando um vão vazio embaixo antes do próximo cartão. Causa raiz de verdade: o botão nunca devia estar disputando espaço de linha com um cartão de conteúdo — é a ação principal da aba, não um card. `grid-column:1/-1` tira ele do grid de cartões: vira uma linha própria de largura cheia, sem vão nenhum antes dos cartões "Modo de caçada"/"Caçada" que descem pra formar o par de colunas seguinte.
+
+## 0.13.2-ui.3 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `ui`.
+
+### Correção: botão "Ligar/Desligar Caçada" gigante dentro do workspace central
+
+André: "olha esse botão ENORME". Causa: `#autoTabPanelCacada > .autoToggleBtn` é filho direto do mesmo grid dos cartões da aba Caçada (`auto-fit, minmax(300px,1fr)`, da v0.13.1) — e o `align-items:stretch` padrão do CSS Grid esticava o botão até bater a altura do card vizinho na mesma linha ("Modo de caçada", mais alto por ter mais conteúdo). Corrigido com `align-self:start`: o botão volta a ter só a altura do próprio conteúdo, tamanho de botão normal.
+
+## 0.13.2-ui.2 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `ui`.
+
+### Tirado o "slider": lateral virou popover, workspace central virou o único modo
+
+André perguntou direto: "você não implementou a proposta de layout, retirando o slider?" — não tinha, só a paleta de cores até aqui. Implementado agora:
+
+- **A barra lateral de 250px não abre mais sozinha ao passar o mouse** (era a "trilha que expande" da v0.9.17 — o próprio "slider" que ele queria tirar). Virou um popover ancorado no 📌 da trilha (mesma técnica do popover de zoom que já existia): só abre com clique, só fecha com clique (no 📌 de novo ou fora dele). Abrir/fechar não redimensiona mais a área do jogo — antes o `#mainArea` fazia parte do mesmo `flex` da lateral e "respirava" junto; agora a lateral é `position:fixed`, flutua por cima, o jogo fica sempre do mesmo tamanho.
+- **Automação e Configurações agora SEMPRE abrem no workspace central** (o modal amplo que já existia como protótipo opt-in desde a v0.13.1). O toggle "Workspace central (protótipo)" saiu de Configurações — não é mais experimental, é o único comportamento.
+- **"Destacar" (painel flutuante sobre o jogo) saiu de circulação** — ficou redundante depois que o workspace central virou padrão; o botão continua no código (por segurança, quem tinha ele salvo não perde nada), mas escondido.
+
+## 0.13.2-ui.1 — 2026-09-23 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Novo ciclo — reorganização visual/IA da lateral (o desempenho fica no ciclo `perf` em paralelo).
+
+### Paleta de cores mais sóbria (trilha de contas e indicador "online")
+
+André: achou o verde do indicador "online" e a seleção de cores dos avatares das contas (D/K/N/Z) chamativos demais e sem harmonia entre si, pedindo algo mais minimalista e próximo do visual escuro/contido do próprio jogo. `--success` (usado em todo indicador de "ligado/online" do app — trilha, painel de conta, automação, Telegram) saiu de um verde-menta claro (`#7CB88F`) pra um verde mais fechado e terroso (`#5C9973`). A paleta de cores dos avatares de conta (`AVATAR_COLORS`) trocou de 6 tons saturados tipo "arco-íris" pra 6 tons terrosos/dessaturados (dourado, terracota, verde-azulado, azul-acinzentado, ameixa, oliva) com saturação e luminosidade parecidas entre si — dá pra distinguir as contas sem competir visualmente. Ainda não mexe na reorganização de layout em si (workspace central como padrão, fusão de painéis) — isso vem a seguir, no mesmo ciclo.
+
 ## 0.13.1-perf.1 — 2026-09-23 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Novo ciclo — performance/webview (o Bestiary fechou na 0.13.0).
