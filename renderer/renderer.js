@@ -4257,7 +4257,25 @@ function swagFindTabIdByCharacterName(name) {
   return null;
 }
 
+// v0.13.5 — conexão Realtime que avisa quando o painel cria comando (ver
+// renderer/realtime-comandos.js). Substitui a consulta a cada 3s do main.js,
+// que era 79% do tráfego do Supabase.
+function swagInitRealtimeComandos() {
+  if (typeof window.criarRealtimeComandos !== "function" || !window.hunteraFarm.swagGetRealtimeConfig) return;
+  const rt = window.criarRealtimeComandos({
+    WebSocketImpl: window.WebSocket,
+    aoChegarComando: () => window.hunteraFarm.swagCommandsHint().catch(() => {}),
+    aoMudarStatus: (ativo) => window.hunteraFarm.swagRealtimeStatus(ativo).catch(() => {}),
+  });
+  window.hunteraFarm.onSwagRealtimeConfig((cfg) => rt.configurar(cfg));
+  window.hunteraFarm
+    .swagGetRealtimeConfig()
+    .then((cfg) => rt.configurar(cfg))
+    .catch(() => {});
+}
+
 function swagInitRemoteCommands() {
+  swagInitRealtimeComandos();
   window.hunteraFarm.onSwagRemoteCommand((cmd) => {
     const tabId = swagFindTabIdByCharacterName(cmd && cmd.characterName);
     if (!tabId) {

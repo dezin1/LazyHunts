@@ -45,7 +45,10 @@ void iPrimeiroUsoGeral;
 
 // ---------- 2) atualização automática ----------
 assert(pkg.build.appId === "br.com.andre.hunteramulticonta", "appId inalterado (é o que liga a instalação antiga à nova e o registro no Windows)");
-assert(pkg.build.publish && pkg.build.publish.owner === "dezin1" && pkg.build.publish.repo === "MultiAccount", "o feed de atualização continua o mesmo repositório");
+{
+  const gh = (pkg.build.publish || []).find((p) => p.provider === "github");
+  assert(gh && gh.owner === "dezin1" && gh.repo === "MultiAccount", "o GitHub continua na publicação (quem tem versão antiga ainda atualiza por ele)");
+}
 
 // ---------- 3) nome do produto e instalador ----------
 assert(pkg.build.productName === "LazyHunts", "productName = LazyHunts");

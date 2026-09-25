@@ -55,6 +55,17 @@ contextBridge.exposeInMainWorld("hunteraFarm", {
     return () => ipcRenderer.removeListener("swag:remoteCommand", handler);
   },
   swagCommandResult: (result) => ipcRenderer.invoke("swag:commandResult", result),
+  // v0.13.5 — Realtime dos comandos (renderer/realtime-comandos.js): o main
+  // manda a configuração (e o token renovado); a interface avisa se a conexão
+  // está de pé e quando nasce comando.
+  swagGetRealtimeConfig: () => ipcRenderer.invoke("swag:realtimeConfig"),
+  onSwagRealtimeConfig: (callback) => {
+    const handler = (_event, cfg) => callback(cfg);
+    ipcRenderer.on("swag:realtimeConfig", handler);
+    return () => ipcRenderer.removeListener("swag:realtimeConfig", handler);
+  },
+  swagRealtimeStatus: (ativo) => ipcRenderer.invoke("swag:realtimeStatus", !!ativo),
+  swagCommandsHint: () => ipcRenderer.invoke("swag:commandsHint"),
   // v0.11.7 — link "criar conta" na tela de login, abre o site no navegador
   // padrão (não dentro do app).
   swagOpenSignupPage: () => ipcRenderer.invoke("swag:openSignupPage"),

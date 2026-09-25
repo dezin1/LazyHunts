@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.13.5 — 2026-09-25
+
+Fecha o ciclo `lazyhunts` (prévias `0.13.5-lazyhunts.1` a `.3`, abaixo). Resumo do que muda para quem usa:
+
+### O app agora se chama LazyHunts
+Novo nome, novo ícone ("Lua-arco": lua crescente que também é um arco) e site próprio em **lazyhunts.com**. Suas contas, login, estatísticas e configurações continuam onde estavam; "Iniciar com o sistema" continua ligado se estava. Se você tinha o Swag fixado na barra de tarefas, fixe o LazyHunts de novo.
+
+### Instalador leve e downloads pelo domínio
+O instalador (`LazyHunts-Setup.exe`, em **dl.lazyhunts.com**) agora tem menos de 1 MB e baixa o app na hora de instalar. As atualizações automáticas passam a vir do domínio.
+
+### Painel do site mais rápido e mais leve
+Comandos enviados pelo painel (pausar, retomar, trocar caçada/personagem) chegam na hora, por conexão em tempo real, em vez de o app perguntar a cada 3 segundos. Isso também cortou ~90% do tráfego com o servidor.
+
+## 0.13.5-lazyhunts.3 — 2026-09-25 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Ciclo `lazyhunts`. Inclui tudo da `.2` (egress do Supabase).
+
+### Downloads e atualizações por dl.lazyhunts.com (Cloudflare R2)
+
+Preparação para tirar a distribuição do GitHub (e depois poder deixar o repositório privado):
+- **Instalador leve.** O `LazyHunts-Setup.exe` passa a ser o `nsis-web`: **0,78 MB** (antes 80 MB). Ao abrir, ele baixa o pacote do app (80 MB) de `https://dl.lazyhunts.com` e instala, com o mesmo comportamento de antes (um clique, sem administrador, nome fixo).
+- **Atualização automática pelo domínio.** O app instalado passa a buscar atualização em `https://dl.lazyhunts.com/latest.yml`.
+- **Transição sem abandonar ninguém.** Versão final sobe para o R2 **e** para o GitHub: quem tem versão antiga instalada ainda lê o feed do GitHub e precisa receber a nova de lá; a partir dela, passa a ler o domínio.
+- **Prévia nunca chega aos usuários.** Prévia sobe só para o GitHub, marcada como prévia; nunca para o R2. Achado no build: o `electron-builder` tirava o "canal" do sufixo da versão (`lazyhunts`), gerando `lazyhunts.yml` em vez de `latest.yml` e gravando esse canal no app — quem instalasse uma prévia ficaria procurando um arquivo que nunca existiria e **nunca mais atualizaria**. Desligado (`detectUpdateChannel: false`).
+- **Updater nunca busca prévia** (`allowPrerelease = false` explícito). O electron-updater ligava isso sozinho para quem estava numa versão com sufixo (ex.: quem ficou na `0.13.4-spawn.5`).
+- `npm run publish` (`scripts/publicar.mjs`) escolhe os destinos pela versão e exige as credenciais certas antes de começar (`GH_TOKEN` sempre; `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` na final), gerando a config completa num arquivo próprio em vez de mesclar pela linha de comando.
+
+- **Link "criar conta"** da tela de login agora abre `https://lazyhunts.com/cadastrar` (o site já está no domínio; o endereço antigo `...vercel.app` continua no ar para versões antigas).
+
+Teste novo: `scripts/teste-publicar.mjs`. Conferido num build local: `app-update.yml` com `url: https://dl.lazyhunts.com` e sem canal; `latest.yml` com o instalador leve e o pacote `.7z`.
+
+**Falta para ir ao ar:** ativar o R2 na conta, criar o bucket, ligar `dl.lazyhunts.com` a ele, gerar as chaves do R2, e o site apontar o botão "Baixar" para `https://dl.lazyhunts.com/LazyHunts-Setup.exe`.
+
+## 0.13.5-lazyhunts.2 — 2026-09-25 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Ciclo `lazyhunts`.
+
+### Correção: o app consumia quase todo o egress do Supabase (plano grátis perto do teto)
+
+Medido nos logs do Supabase (últimas 24h, 7 usuários): **183 mil requisições, e 145 mil (79%) eram o app perguntando "tem comando novo do painel?" a cada 3 segundos**, quase sempre recebendo "nada" (cada resposta vazia ainda leva ~0,5 KB de cabeçalho). Mais ~37 mil eram as escritas de `devices` e `character_state` a cada 20s, mesmo sem nada mudar. Isso levava o projeto a 1,98 de 5 GB no ciclo.
+
+Agora:
+- **Comandos do painel por Realtime.** A interface abre uma conexão (WebSocket) e o Supabase avisa quando nasce um comando para este computador; aí o app busca pelo caminho de sempre. Os comandos chegam **mais rápido** que antes (na hora, em vez de até 3s). Sem banco novo: a tabela `commands` já estava habilitada para Realtime, com RLS por dono.
+- **Rede de segurança:** com o Realtime de pé, uma consulta a cada 3 min; se ele cair, o app volta a consultar a cada 10s e reconecta sozinho (2s, 5s, 10s, 30s, até 60s). Token renovado a cada ciclo de licença vai pelo próprio canal, sem reconectar.
+- **`devices`** (só "visto por último", que o site apenas exibe) a cada 2 min em vez de 20s.
+- **`character_state`** só é reenviado quando algo muda, com reenvio de segurança a cada 5 min. A stamina vai arredondada ao minuto (o painel mostra horas:minutos), senão mudaria em todo envio. Isso também reduz as recargas do painel do site, que recarrega a lista a cada mudança.
+
+Estimativa: de ~183 mil para ~15-20 mil requisições/dia com os mesmos 7 usuários (~90% a menos). Conferir no Supabase depois de alguns usuários atualizarem.
+
+Arquivos: `renderer/realtime-comandos.js` (novo), `main.js`, `preload.js`, `renderer/renderer.js`, `renderer/index.html`. Teste novo: `scripts/teste-realtime-comandos.mjs` (módulo real com WebSocket e relógio falsos: conexão, canal, aviso, sinal de vida, token renovado, queda e reconexão, canal recusado, logout; e o ritmo do `main.js`). O aperto de mão com o Realtime do projeto foi conferido de verdade (resposta "Subscribed to PostgreSQL").
+
 ## 0.13.5-lazyhunts.1 — 2026-09-25 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Ciclo `lazyhunts`.

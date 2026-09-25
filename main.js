@@ -600,7 +600,46 @@ async function swagCheckAndBindDevice() {
 
 function swagBroadcastStatus() {
   if (mainWindow) mainWindow.webContents.send("swag:statusChanged", swagLicense);
+  // v0.13.5 — todo ciclo de licença (login, logout, a cada 10 min) também
+  // renova o token da conexão Realtime da interface (renderer/realtime-comandos.js).
+  swagEnviarRealtimeConfig();
 }
+
+// ---------- v0.13.5 — Realtime dos comandos do painel ----------
+// A interface mantém a conexão e avisa quando nasce comando; aqui só se sabe
+// se ela está de pé (`swagRealtimeAtivo`) pra decidir se ainda precisa consultar.
+let swagRealtimeAtivo = false;
+
+async function swagRealtimeConfig() {
+  if (!swagSession || !swagLicense.licensed) return null;
+  return {
+    url: SWAG_SUPABASE_URL,
+    anonKey: SWAG_SUPABASE_ANON_KEY,
+    accessToken: swagSession.access_token,
+    deviceId: await swagGetDeviceId(),
+  };
+}
+
+function swagEnviarRealtimeConfig() {
+  swagRealtimeConfig()
+    .then((cfg) => {
+      if (mainWindow) mainWindow.webContents.send("swag:realtimeConfig", cfg);
+    })
+    .catch(() => {});
+}
+
+ipcMain.handle("swag:realtimeConfig", () => swagRealtimeConfig());
+ipcMain.handle("swag:realtimeStatus", (_event, ativo) => {
+  swagRealtimeAtivo = !!ativo;
+  return { ok: true };
+});
+ipcMain.handle("swag:commandsHint", () => {
+  if (!swagSession || !swagLicense.licensed) return { ok: false };
+  swagGetDeviceId()
+    .then((deviceId) => swagPollCommands(deviceId))
+    .catch(() => {});
+  return { ok: true };
+});
 
 async function swagRefreshLicense() {
   if (!swagSession) {
@@ -725,6 +764,18 @@ async function swagUpsertDevice(deviceId) {
   });
 }
 
+let swagUltimaAssinaturaEstado = null;
+let swagUltimoEstadoEm = 0;
+
+function swagAssinaturaDoEstado(rows) {
+  return JSON.stringify(
+    rows.map((r) => {
+      const { updated_at, ...resto } = r;
+      return resto;
+    })
+  );
+}
+
 async function swagUpsertCharacterStates(deviceId) {
   const tabsSnapshot = swagLatestSnapshot.tabs || [];
   const rows = [];
@@ -740,7 +791,7 @@ async function swagUpsertCharacterStates(deviceId) {
         character_name: t.characterName,
         vocation: t.vocation || null,
         level: t.level || null,
-        stamina_seconds: t.staminaSeconds != null ? Math.max(0, Math.round(t.staminaSeconds)) : null,
+        stamina_seconds: t.staminaSeconds != null ? Math.max(0, Math.round(t.staminaSeconds / 60) * 60) : null,
         current_hunt: t.currentHunt || null,
         is_hunting: !!t.isHunting,
         // v0.11.4 — huntNames/knownCharacters vão dentro do jsonb (em vez de
@@ -762,7 +813,18 @@ async function swagUpsertCharacterStates(deviceId) {
       swagKnownCharacterByTab.delete(t.tabId);
     }
   }
-  if (rows.length) {
+  // v0.13.5 — só reenvia quando algo MUDOU (ou a cada 5 min, de segurança).
+  // Antes ia a cada 20s mesmo parado — e cada envio também disparava o
+  // Realtime do painel, que recarrega a lista inteira. A stamina entra
+  // arredondada ao minuto (o painel mostra minutos): em segundos ela mudaria
+  // em todo envio e anularia a economia.
+  const assinatura = swagAssinaturaDoEstado(rows);
+  const agora = Date.now();
+  const mudou = assinatura !== swagUltimaAssinaturaEstado;
+  const venceuReenvio = agora - swagUltimoEstadoEm >= SWAG_ESTADO_REENVIO_MS;
+  if (rows.length && (mudou || venceuReenvio)) {
+    swagUltimaAssinaturaEstado = assinatura;
+    swagUltimoEstadoEm = agora;
     await fetch(`${SWAG_SUPABASE_URL}/rest/v1/character_state?on_conflict=device_id,character_name`, {
       method: "POST",
       headers: {
@@ -811,7 +873,10 @@ const SWAG_DEFAULT_COMMAND_TIMEOUT_MS = 12000; // pause/resume/change_hunt são 
 // usa (sendAutomationCommand). Nunca fala direto com o webview daqui — quem
 // sabe qual tabId corresponde a qual personagem é o renderer (automationState
 // mora só lá).
+let swagUltimoPollComandosEm = 0;
+
 async function swagPollCommands(deviceId) {
+  swagUltimoPollComandosEm = Date.now();
   const res = await fetch(
     `${SWAG_SUPABASE_URL}/rest/v1/commands?device_id=eq.${deviceId}&status=eq.pending&select=id,character_name,command_type,payload&order=created_at.asc&limit=20`,
     {
@@ -848,13 +913,33 @@ async function swagPollCommands(deviceId) {
   }
 }
 
+// v0.13.5 — RITMO DAS ESCRITAS E CONSULTAS (egress do Supabase).
+// `devices` só guarda "visto por último" (o site só exibe a data, não decide
+// online/offline por ela) — a cada 2 min basta. `character_state` só é
+// reenviado quando algo MUDA, com um reenvio de segurança a cada 5 min.
+// Comandos: com o Realtime de pé, a consulta vira só rede de segurança
+// (3 min); sem ele, 10s — ver swagStartBridgeLoop.
+const SWAG_DEVICE_INTERVALO_MS = 2 * 60 * 1000;
+const SWAG_ESTADO_REENVIO_MS = 5 * 60 * 1000;
+const SWAG_COMANDOS_SEGURANCA_MS = 3 * 60 * 1000;
+const SWAG_COMANDOS_SEM_REALTIME_MS = 10 * 1000;
+let swagUltimoDeviceEm = 0;
+
+function swagPrecisaConsultarComandos(agora = Date.now()) {
+  const intervalo = swagRealtimeAtivo ? SWAG_COMANDOS_SEGURANCA_MS : SWAG_COMANDOS_SEM_REALTIME_MS;
+  return agora - swagUltimoPollComandosEm >= intervalo;
+}
+
 async function swagSyncBridge() {
   if (!swagSession || !swagLicense.licensed) return; // sem conta/licença, nada pra sincronizar
   try {
     const deviceId = await swagGetDeviceId();
-    await swagUpsertDevice(deviceId);
+    if (Date.now() - swagUltimoDeviceEm >= SWAG_DEVICE_INTERVALO_MS) {
+      swagUltimoDeviceEm = Date.now();
+      await swagUpsertDevice(deviceId);
+    }
     await swagUpsertCharacterStates(deviceId);
-    await swagPollCommands(deviceId);
+    if (swagPrecisaConsultarComandos()) await swagPollCommands(deviceId);
   } catch (err) {
     // Rede instável/Supabase fora do ar — nunca trava nada local; a próxima
     // rodada (20s) tenta de novo.
@@ -880,12 +965,19 @@ function swagStartBridgeLoop() {
   // query de sempre, sem escrever nada pesado). O dedup por
   // `swagPendingCommands.has(cmd.id)` dentro de swagPollCommands já
   // protege contra os dois loops pegarem o mesmo comando duas vezes.
+  //
+  // v0.13.5 — e esse poll de 3s era 79% de todo o tráfego do Supabase (145 mil
+  // de 183 mil requisições/dia com 7 usuários, quase todas respondendo "nada").
+  // O caminho rápido agora é o Realtime (renderer/realtime-comandos.js avisa via
+  // `swag:commandsHint`); este laço só consulta quando o Realtime NÃO está de
+  // pé, a cada 10s, e como rede de segurança a cada 3 min quando está.
   setInterval(() => {
     if (!swagSession || !swagLicense.licensed) return;
+    if (!swagPrecisaConsultarComandos()) return;
     swagGetDeviceId()
       .then((deviceId) => swagPollCommands(deviceId))
       .catch(() => {});
-  }, 3000);
+  }, 2000);
 }
 
 ipcMain.handle("swag:login", async (_event, { email, password } = {}) => {
@@ -915,7 +1007,9 @@ ipcMain.handle("swag:refreshStatus", () => swagRefreshLicense());
 // fixa aqui (não vem do renderer) — mesma lógica de superfície mínima do
 // resto da ponte IPC: o processo principal decide pra onde vai, o renderer
 // só pede.
-const SWAG_SIGNUP_URL = "https://swag-site-andr-pinheiro-schulzs-projects.vercel.app/cadastrar";
+// v0.13.5 — domínio próprio (lazyhunts.com). O endereço antigo ...vercel.app
+// continua no ar, então versões antigas do app seguem funcionando.
+const SWAG_SIGNUP_URL = "https://lazyhunts.com/cadastrar";
 ipcMain.handle("swag:openSignupPage", () => {
   shell.openExternal(SWAG_SIGNUP_URL);
 });
@@ -1255,6 +1349,11 @@ function setupAutoUpdater() {
   if (!app.isPackaged) return;
 
   autoUpdater.autoDownload = true;
+  // v0.13.5 — explícito. O electron-updater liga `allowPrerelease` sozinho
+  // quando a versão INSTALADA tem sufixo (ex.: quem ficou numa prévia
+  // `0.13.4-spawn.5`) e aí passaria a buscar prévias no GitHub. Usuário só
+  // recebe versão final.
+  autoUpdater.allowPrerelease = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on("error", (err) => {
