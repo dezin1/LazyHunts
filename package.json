@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
-    "publish": "electron-builder --publish always",
+    "publish": "node scripts/publicar.mjs",
     "commit": "node scripts/commit.mjs",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",

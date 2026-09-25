@@ -19,3 +19,16 @@ Motivo: o app ficou em `0.12.4` por várias entregas seguidas (Bestiário inteir
    npm run verify:version
    ```
    Isso confere: versão válida em `package.json`; a mesma versão no topo do `CHANGELOG.md`; e que os pontos de exibição da versão (`main.js`, `preload.js`, `renderer/renderer.js`) continuam lendo `app.getVersion()` dinamicamente, nunca um número hardcoded. Ver `scripts/verificar-versao.mjs`.
+
+## Rotina de entrega depois da validação (24/09/2026)
+
+Fluxo combinado com o André: eu lanço uma prévia, ele testa (`npm start`); quando ele disser que **validou** ("validei", "pode publicar"), eu faço o resto sozinho. Esse aviso É a autorização para commit, push e publish daquela versão — não peço de novo, e ela não vale para a versão seguinte.
+
+1. **Fechar a versão**: tirar o sufixo de prerelease (`0.13.4-spawn.5` → `0.13.4`) no `package.json` e no topo do `CHANGELOG.md` (regra 3 acima). `npm run verify:version` tem que passar.
+2. **Rodar todos os testes** de `scripts/teste-*.mjs` e `node --check` nos arquivos alterados. Falhou = não segue, e conto o que falhou.
+3. **Commit** (mensagem no padrão `chore(release): <versão>`, sem `--no-verify`). Nunca `npm version` (regra 5).
+4. **Push** do branch atual pro `origin` (`-u` na primeira vez).
+5. **Publish**: `npm run publish` (roda `scripts/publicar.mjs`: confere `verify:version`, escolhe **prévia** para versão com sufixo e **release final** para versão limpa, e chama `electron-builder --publish always`; `-- --dry` só mostra o plano). Cria a Release em `dezin1/MultiAccount`. Precisa de `GH_TOKEN` no ambiente; token nunca é digitado nem colado por mim. Sem token, paro aqui e aviso que o publish fica com o André.
+6. **Conferir e reportar**: commit no remoto, Release criada (tag, se está marcada como "Latest") e a versão que os usuários vão receber.
+
+Não faço `git push --force`, não apago Release/tag e não publico sem o aviso de validação do André.
