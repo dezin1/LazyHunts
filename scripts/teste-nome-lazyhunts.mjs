@@ -47,7 +47,7 @@ void iPrimeiroUsoGeral;
 assert(pkg.build.appId === "br.com.andre.hunteramulticonta", "appId inalterado (é o que liga a instalação antiga à nova e o registro no Windows)");
 {
   const gh = (pkg.build.publish || []).find((p) => p.provider === "github");
-  assert(gh && gh.owner === "dezin1" && gh.repo === "MultiAccount", "o GitHub continua na publicação (quem tem versão antiga ainda atualiza por ele)");
+  assert(gh && gh.owner === "dezin1" && gh.repo === "LazyHunts", "o GitHub continua na publicação (repositório renomeado de MultiAccount para LazyHunts em 25/09/2026)");
 }
 
 // ---------- 3) nome do produto e instalador ----------
