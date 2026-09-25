@@ -68,7 +68,7 @@ function main() {
   }
 
   const resumo = custom || resumoDoChangelog(v);
-  const mensagem = resumo ? `Swag v${v} - ${resumo}` : `Swag v${v}`;
+  const mensagem = resumo ? `LazyHunts v${v} - ${resumo}` : `LazyHunts v${v}`;
 
   git("add", "-A");
   git("commit", "-m", mensagem);

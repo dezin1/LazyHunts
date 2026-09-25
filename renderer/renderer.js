@@ -289,7 +289,7 @@ try {
     // TASK-004 — único ponto que escreve o indicador visual de versão; lê
     // sempre de `app.getVersion()` (Electron, que por sua vez lê o
     // `version` do package.json), nunca um número digitado à mão aqui.
-    if (appVersionTagEl && v) appVersionTagEl.textContent = `Swag v${v}`;
+    if (appVersionTagEl && v) appVersionTagEl.textContent = `LazyHunts v${v}`;
   }).catch(() => {});
 } catch (err) {}
 
@@ -370,7 +370,7 @@ function salvarSnapshotDom(tab, pacote) {
   if (!pacote) return;
   try {
     const html = String(pacote.html || "");
-    const cabecalho = `<!--\nSnapshot de DOM — Swag\ngerado: ${pacote.gerado}\npersonagem: ${pacote.personagem}\nurl: ${pacote.url}\ncapturado: ${pacote.capturado}\ntruncado: ${pacote.truncado}\nbytes: ${pacote.bytes}\n-->\n`;
+    const cabecalho = `<!--\nSnapshot de DOM — LazyHunts\ngerado: ${pacote.gerado}\npersonagem: ${pacote.personagem}\nurl: ${pacote.url}\ncapturado: ${pacote.capturado}\ntruncado: ${pacote.truncado}\nbytes: ${pacote.bytes}\n-->\n`;
     const conteudo = cabecalho + html;
     const quem = (pacote.personagem || tab.label || "conta").replace(/[^\w.-]+/g, "-");
     const carimbo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -1926,7 +1926,7 @@ if (appSnapshotBtn) {
     try {
       const alvo = document.getElementById("sidebar") || document.body;
       const html = alvo.outerHTML || "";
-      const cabecalho = `<!--\nSnapshot do APP (barra lateral) — Swag\ngerado: ${new Date().toISOString()}\nversao: ${versaoDoApp || "?"}\n-->\n`;
+      const cabecalho = `<!--\nSnapshot do APP (barra lateral) — LazyHunts\ngerado: ${new Date().toISOString()}\nversao: ${versaoDoApp || "?"}\n-->\n`;
       const conteudo = cabecalho + html;
       const carimbo = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const nome = `swag-app-sidebar-${carimbo}.html`;
@@ -2577,7 +2577,7 @@ function detalheDoLoot(ec) {
     }
   }
   if (ec.fonte === "gold") {
-    partes.push('<p class="fieldHint">Números reconstruídos pelo Swag — o analisador do jogo é premium e não chega nesta conta.</p>');
+    partes.push('<p class="fieldHint">Números reconstruídos pelo LazyHunts — o analisador do jogo é premium e não chega nesta conta.</p>');
   }
   return `<details class="hintMore ecoDetalhe"><summary>Detalhe do loot e do gasto</summary>${partes.join("")}</details>`;
 }
@@ -2901,7 +2901,7 @@ async function renderPerfLive() {
   // frase própria. Painel de diagnóstico que não diagnostica a si mesmo é o
   // mesmo defeito que o detector de spawn seco teve por meses.
   if (!window.hunteraFarm || typeof window.hunteraFarm.getPerfMetrics !== "function") {
-    el.textContent = "Esta versão do app ainda não tem a medição — feche e abra o Swag de novo.";
+    el.textContent = "Esta versão do app ainda não tem a medição — feche e abra o LazyHunts de novo.";
     return;
   }
 
@@ -4178,7 +4178,7 @@ function applySwagStatus(status) {
     swagGateMessage.classList.add("err");
   } else if (s.reason === "network_error") {
     swagGateSubtitle.textContent = "Não consegui confirmar seu acesso agora.";
-    swagGateMessage.textContent = "Sem conexão com o servidor do Swag — tentando de novo sozinho. Se voltar a ficar online, isto resolve solo.";
+    swagGateMessage.textContent = "Sem conexão com o servidor do LazyHunts — tentando de novo sozinho. Se voltar a ficar online, isto resolve solo.";
     swagGateMessage.classList.add("err");
   } else {
     swagGateSubtitle.textContent = "Entre com sua conta pra liberar a automação.";

@@ -1,6 +1,6 @@
 {
   "name": "huntera-multiconta",
-  "version": "0.13.4",
+  "version": "0.13.5-lazyhunts.1",
   "description": "App desktop (Electron) não-oficial pra manter várias contas do Huntera logadas em paralelo, cada uma isolada, numa janela só. Projeto de aprendizado — inspirado no HunteraFarm (descontinuado), reescrito do zero.",
   "private": true,
   "main": "main.js",
@@ -22,7 +22,7 @@
   },
   "build": {
     "appId": "br.com.andre.hunteramulticonta",
-    "productName": "Swag",
+    "productName": "LazyHunts",
     "icon": "build/icon",
     "files": [
       "main.js",
@@ -47,7 +47,7 @@
       "oneClick": true,
       "perMachine": false,
       "allowToChangeInstallationDirectory": false,
-      "artifactName": "Swag-Setup.exe"
+      "artifactName": "LazyHunts-Setup.exe"
     },
     "directories": {
       "output": "dist-novo"
@@ -74,11 +74,11 @@
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "artifactName": "Swag-mac-${arch}.${ext}"
+      "artifactName": "LazyHunts-mac-${arch}.${ext}"
     },
     "dmg": {
-      "artifactName": "Swag-mac-${arch}.dmg",
-      "title": "Swag ${version}"
+      "artifactName": "LazyHunts-mac-${arch}.dmg",
+      "title": "LazyHunts ${version}"
     }
   },
   "dependencies": {

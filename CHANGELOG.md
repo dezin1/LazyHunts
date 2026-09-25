@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.13.5-lazyhunts.1 — 2026-09-25 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Ciclo `lazyhunts`.
+
+### O app agora se chama LazyHunts
+
+"Swag" é uma palavra comum demais: ocupada ou "premium" em quase todos os domínios, e perde na busca para gíria e brindes. O produto passa a se chamar **LazyHunts** (domínio `lazyhunts.com` já registrado). Muda o que o usuário vê: título da janela, tela de login, barra lateral, indicador de versão, notificações do Telegram, diálogo de atualização, e o instalador (`LazyHunts-Setup.exe`, executável `LazyHunts.exe`).
+
+**O que NÃO muda, de propósito, pra não quebrar quem já usa:**
+- **Pasta de dados** continua `%APPDATA%\huntera-multiconta` (contas salvas, login, estatísticas, Telegram, perfis de spawn). Antes isso vinha implícito do nome do pacote; agora está fixado no código, antes de qualquer leitura.
+- **appId** e **repositório de atualização** iguais: quem está na `0.13.4` recebe a atualização normalmente.
+- **"Iniciar com o sistema"**: a entrada do Windows guardava o caminho do `Swag.exe`, que o instalador apaga. Na primeira abertura, se ela existir, é regravada apontando pro `LazyHunts.exe` — sem isso a opção desligaria em silêncio.
+- Nomes internos (classes CSS `swag*`, arquivos `swag-session.bin`, funções) ficam como estão: não aparecem pro usuário, e renomear arquivo de sessão deslogaria todo mundo.
+
+### Ícone novo: "Lua-arco"
+
+O leão saiu. O ícone agora é uma lua crescente dourada que também é um arco, com uma flecha apontando pra cima (a lua é o "lazy", o arco é o "hunts"), sobre o quadrado escuro do tema Grimório.
+- `build/icon.ico` (16 a 256 px), `build/icon.icns` (até 1024 px) e `renderer/assets/app-icon.png` (janela e barra de tarefas) gerados do SVG-fonte, que fica em `build/icon-fonte/`.
+- **16 e 24 px usam uma versão simplificada** (lua mais grossa, flecha sem penas, sem corda e sem estrela): na arte completa, nesses tamanhos, a corda e as penas viravam ruído.
+- **Camadas pequenas do `.ico` em BMP, só a de 256 px em PNG.** Com PNG em todas (como era o ícone do leão), o Windows devolvia o ícone genérico ao ler o `.exe` — medido no build. Provavelmente o leão também aparecia genérico no Explorer.
+- Marcas dentro do app (topo e tela de login) trocadas pela lua-arco, sem o quadrado de fundo e com as cores do tema: a lua segue a cor de destaque (inclusive safira e violeta) e a flecha a cor do texto, então funciona no tema claro. Conferido nos temas escuro, claro e safira.
+- `renderer/assets/lion-mark.png` removido (nada no código usava mais).
+
+**Pendente fora do app:** o site (`swag-site`) ainda diz "Swag" e o botão "Baixar" aponta pra `Swag-Setup.exe`. Como esta versão é prévia, ela não vira "latest" e esse link continua funcionando; **antes de fechar como release final**, o site precisa passar a apontar pra `LazyHunts-Setup.exe` no mesmo dia.
+
+Teste novo: `scripts/teste-nome-lazyhunts.mjs` (pasta de dados fixada antes do primeiro uso, appId/feed inalterados, migração do "Iniciar com o sistema" rodando a função real, nenhum "Swag" em texto visível).
+
 ## 0.13.4 — 2026-09-24
 
 Fecha o ciclo `0.13.1` → `0.13.4` (prévias `perf`, `ui`, `grimorio` e `spawn`, abaixo). Resumo do que muda de verdade pra quem usa:

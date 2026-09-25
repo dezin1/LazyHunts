@@ -27,6 +27,19 @@ const os = require("os");
 // v0.6.0 — atualização automática (ver `setupAutoUpdater` mais abaixo).
 const { autoUpdater } = require("electron-updater");
 
+// v0.13.5 — A PASTA DE DADOS É FIXA, NÃO SEGUE O NOME DO APP.
+// Contas salvas, login, estatísticas, Telegram e perfis de spawn moram em
+// %APPDATA%\huntera-multiconta. Até aqui isso vinha implícito do `name` do
+// package.json; com a troca de nome (Swag → LazyHunts) fica escrito, pra que
+// nenhuma mudança futura de nome/productName faça o app abrir com uma pasta
+// vazia e o usuário "perder" tudo depois de atualizar. Tem que rodar antes de
+// qualquer `app.getPath("userData")` (as constantes logo abaixo).
+const PASTA_DE_DADOS = "huntera-multiconta";
+app.setPath("userData", path.join(app.getPath("appData"), PASTA_DE_DADOS));
+
+// Nome exibido do produto (janela, notificações, diálogos).
+const NOME_DO_APP = "LazyHunts";
+
 // v0.3.1 tentou usar `force-device-scale-factor` (linha de comando) pra
 // deixar o zoom reduzido mais nítido. REVERTIDO: esse switch é GLOBAL —
 // afeta TODOS os processos de renderização do app, incluindo a nossa
@@ -301,8 +314,9 @@ function createWindow() {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    title: "Swag",
-    // v0.8.0 — ícone da janela/taskbar com a nova identidade visual (leão).
+    title: NOME_DO_APP,
+    // v0.8.0 — ícone da janela/taskbar (v0.13.5: "Lua-arco" do LazyHunts;
+    // fonte em build/icon-fonte/).
     // O instalador/exe usa `build.icon` no package.json (build/icon.ico,
     // gerado a partir da mesma imagem-fonte); esse aqui é o ícone da janela
     // em tempo de execução — precisa dos dois, um não substitui o outro.
@@ -941,7 +955,7 @@ ipcMain.handle("telegram:notify", async (_event, { message, isError, characterNa
   const name = characterName || "?";
   const time = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   const prefix = isError ? "⚠️" : "🏹";
-  const text = `${prefix} Swag — ${name} (${time})\n${message || ""}`;
+  const text = `${prefix} ${NOME_DO_APP} — ${name} (${time})\n${message || ""}`;
   return sendTelegramMessage(text, { cfgOverride: cfg });
 });
 // Ignora o toggle "Ativar notificações" de propósito (igual o background.js
@@ -950,7 +964,7 @@ ipcMain.handle("telegram:notify", async (_event, { message, isError, characterNa
 // (cfgOverride), não os já salvos — assim dá pra testar antes de clicar em
 // salvar.
 ipcMain.handle("telegram:test", (_event, cfgOverride) =>
-  sendTelegramMessage("🧪 Swag: notificação de teste. Deu certo!", {
+  sendTelegramMessage(`🧪 ${NOME_DO_APP}: notificação de teste. Deu certo!`, {
     ignoreEnabled: true,
     cfgOverride,
   })
@@ -976,6 +990,25 @@ ipcMain.handle("app:getAutoLaunch", () => {
     return false;
   }
 });
+// v0.13.5 — o executável mudou de nome (Swag.exe → LazyHunts.exe), e a
+// entrada de "Iniciar com o sistema" no Registro guarda o CAMINHO do exe. Sem
+// isto, quem tinha a opção ligada perdia ela em silêncio na atualização: a
+// entrada antiga aponta pra um arquivo que o instalador apagou, e o toggle
+// passava a mostrar "desligado". Se a entrada do exe antigo existir, regrava
+// com o exe atual (mesmo nome de valor no Registro: o AppUserModelId vem do
+// appId, que não mudou).
+function migrarIniciarComSistema() {
+  if (process.platform !== "win32" || !app.isPackaged) return;
+  try {
+    const exeAntigo = path.join(path.dirname(process.execPath), "Swag.exe");
+    if (exeAntigo === process.execPath) return;
+    if (app.getLoginItemSettings({ path: exeAntigo }).openAtLogin) {
+      app.setLoginItemSettings({ openAtLogin: true });
+    }
+  } catch {}
+}
+app.whenReady().then(migrarIniciarComSistema);
+
 ipcMain.handle("app:setAutoLaunch", (_event, enabled) => {
   try {
     app.setLoginItemSettings({ openAtLogin: !!enabled });
@@ -1013,7 +1046,7 @@ ipcMain.handle("perf:metrics", (_event, mapaDeContas) => {
     // próprio Swag — que é justamente o número que separa "o app é pesado" de
     // "o jogo é pesado".
     if (mainWindow && !mainWindow.isDestroyed()) {
-      porPid.set(mainWindow.webContents.getOSProcessId(), "Interface do Swag");
+      porPid.set(mainWindow.webContents.getOSProcessId(), `Interface do ${NOME_DO_APP}`);
     }
   } catch (err) {
     // janela fechando — segue sem esse rótulo
@@ -1241,7 +1274,7 @@ function setupAutoUpdater() {
       .showMessageBox(mainWindow, {
         type: "info",
         title: "Atualização pronta",
-        message: `Swag ${info.version} baixado.`,
+        message: `${NOME_DO_APP} ${info.version} baixado.`,
         detail:
           "Reiniciar agora pra atualizar? Se preferir, o app atualiza sozinho na próxima vez que for fechado.",
         buttons: ["Reiniciar agora", "Depois"],
