@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.13.4 — 2026-09-24
+
+Fecha o ciclo `0.13.1` → `0.13.4` (prévias `perf`, `ui`, `grimorio` e `spawn`, abaixo). Resumo do que muda de verdade pra quem usa:
+
+### Visual novo: identidade "Grimório"
+Tema escuro de fantasia sombria (tinta, pergaminho e dourado envelhecido) no lugar do verde. A barra lateral virou um popover e a **Automação abre num painel central que não bloqueia o jogo e pode ser arrastado**. Dá para trocar de conta sem fechar o painel. Caçada e Bestiário em **cards lado a lado**, com "Ligar/Desligar" e "Iniciar Bestiário" no cabeçalho. Saíram os botões redundantes ("Destacar", "‹ Contas").
+
+### Auto Bestiary
+Ao adicionar uma caçada na escada, a **fase atual e o alvo (fase + 1) já vêm calculados** a partir dos abates, em vez de começar sempre em 1.
+
+### Spawn seco: sai mais rápido, sem cortar caçada viva
+Teto de tiles, lote em 2× / mínimo de 10 s e um **piso de tempo aprendido por caçada** (8–15 s). Nos logs reais: Vampire 28 s → 15 s sem matar até sair; Giant Spider da 2ª volta em diante 15 s → 8 s; nenhum disparo cortou uma caçada que ainda ia nascer bicho. Corrigido o caso de **reconexão na mesma instância**, que deixava o detector sem disparar. **Agora vende o loot antes de reentrar** (antes voltava com a bag cheia).
+
+### Rodízio de personagens por stamina
+Troca com **10 min de stamina** (o jogo não deixa entrar com menos de 5). Quem saía com menos de 5 min ficava travado: não trocava e não voltava. Agora o personagem sai da caçada em 10 min e passa a vez; a configuração antiga de 5 min é lida como 10.
+
+### Só para desenvolvimento
+Gravação contínua do log de protocolo em `logs/` (fora dos builds instalados) e a rotina de entrega/publicação (`npm run publish` publica prévia ou release conforme a versão).
+
 ## 0.13.4-spawn.5 — 2026-09-24 (prévia de teste)
 
 > ⚠️ **Versão de teste, não é release final.** Mesmo ciclo `spawn`.
