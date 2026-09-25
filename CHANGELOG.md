@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.13.7 — 2026-09-25
+
+Fecha o ciclo `analisador` (prévias `0.13.7-analisador.1` a `.3`, abaixo). Resumo do que muda para quem usa:
+
+### Base do app atualizada: Electron 44 (Chromium 152)
+O navegador por dentro do app saiu de uma versão de 2024, sem correções de segurança desde março de 2025, para a mais recente. As páginas do jogo passam a rodar com dois anos de correções de segurança do Chromium. Requer Windows 64 bits (ou macOS 13+).
+
+### Todas as contas se identificam como Google Chrome
+O app não se apresenta mais ao site como Electron nem pelo nome do app: todas as contas usam o `User-Agent` do Chrome para Windows (`Chrome/152.0.0.0`).
+
+### XP/h e lucro/h dos últimos 15 minutos na conta free
+O "por hora" da conta free agora reflete o ritmo atual da caçada (janela móvel de 15 min), em vez da média da sessão inteira. Conta premium não muda.
+
+## 0.13.7-analisador.3 — 2026-09-25 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Inclui tudo da `0.13.7-analisador.2`.
+
+### Electron 44 (Chromium 152)
+
+O app rodava no Electron 32.3.3 (Chromium 128, agosto de 2024), fora de
+suporte e sem correções de segurança desde março de 2025. Agora usa o
+**Electron 44.4.5** (Chromium 152.0.7977.130), a versão estável mais recente.
+
+- **Segurança:** dois anos de correções do Chromium nas páginas do jogo.
+- **User-Agent:** passa a `Chrome/152.0.0.0`, próximo do Chrome estável atual
+  (154), em vez dos 26 majors de atraso do `Chrome/128.0.0.0`. O número
+  continua vindo do Chromium embarcado (regra de ouro do `CLAUDE.md`).
+- **`electron-builder` 26:** necessário para empacotar o Electron 44.
+- **Instalação:** o Electron 42+ não baixa mais o binário no `npm install`; ele
+  é baixado na primeira execução (`npm start`) ou com `npx install-electron`.
+- **Requisitos:** Windows 64 bits (32 bits não é mais suportado) e macOS 13+.
+- Revisadas as mudanças incompatíveis do Electron 33–44 contra o código do app:
+  nenhuma API usada foi removida. Único efeito visível: o popup de login do
+  Google passa a ser redimensionável.
+
+## 0.13.7-analisador.2 — 2026-09-25 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Inclui tudo da `0.13.7-analisador.1`.
+
+### Todos os clientes se identificam como Google Chrome
+
+Todas as contas, partições e janelas de autenticação agora usam globalmente o
+`User-Agent` reduzido oficial do Chrome para Windows:
+
+```text
+Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<versão-principal>.0.0.0 Safari/537.36
+```
+
+- Não expõe `LazyHunts`, `huntera-multiconta` nem `Electron`.
+- A versão principal acompanha automaticamente o Chromium realmente embarcado
+  no app; neste build, `Chrome/128.0.0.0`.
+- A garantia ficou registrada como **regra de ouro** no `CLAUDE.md`.
+- Teste de regressão: `scripts/teste-user-agent.mjs`.
+
+## 0.13.7-analisador.1 — 2026-09-25 (prévia de teste)
+
+> ⚠️ **Versão de teste, não é release final.** Ciclo `analisador`.
+
+### Analisador da conta free: XP/h e lucro/h dos últimos 15 minutos
+
+Na conta free (sem o analisador do jogo), o "por hora" era **total da sessão ÷ duração da sessão**. Com horas de acumulado, uma caçada que mudou de ritmo quase não mexia no número, e o começo da sessão pesava para sempre. Exemplo do teste: 2h a 6.000 xp/h seguidas de 15 min a 36.000 xp/h davam **9.333 xp/h**; agora dão **36.000**.
+
+- **Janela móvel de 15 min:** a cada 30s o app guarda os acumulados (XP e lucro); o por hora é o ganho desde a foto de 15 min atrás, dividido pelo tempo real entre elas.
+- **Tempo de relógio, com o entra-e-sai:** sair da hunt, vender e renovar spawn seco **não zeram** a janela; esse vaivém faz parte do ciclo e entra na média (o número é o rendimento real por hora).
+- **Recomeça só quando a sessão do analisador recomeça** (troca de personagem, automação religada).
+- **Painel:** o rótulo diz a janela ("XP por hora (últimos 15 min)"; menos no começo) e, nos primeiros 2 min, mostra "medindo…" em vez de um número instável.
+- **Totais inalterados:** tempo, mortes, XP, custo e lucro continuam somando a sessão inteira.
+- **Conta premium não muda:** continua com o analisador do próprio jogo.
+
+Teste novo: `scripts/teste-analisador-15min.mjs` (código real, relógio falso: começo, ritmo constante, mudança de ritmo, saída da hunt no meio da janela, premium e resets).
+
 ## 0.13.6 — 2026-09-25
 
 Republica a 0.13.5 com o instalador consertado. **O código do app é o mesmo da 0.13.5.**

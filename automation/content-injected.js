@@ -1086,6 +1086,10 @@
     economia.sessaoEm = 0;
     // v0.11.21 — a sessão reconstruída zera junto com o resto.
     economia.inicio = Date.now();
+    // v0.13.7 — a janela de 15 min da conta free zera junto.
+    try {
+      janelaFreeZerar();
+    } catch (e) {}
     economia.kills = 0;
     economia.bestiario.clear();
     economia.bestiarioFases.clear();
@@ -3213,6 +3217,85 @@
     return { total, semPreco };
   }
 
+  // v0.13.7 — XP/h E LUCRO/h DA CONTA FREE NOS ÚLTIMOS 15 MINUTOS DE CAÇADA.
+  //
+  // André (25/09/2026): na conta free o "por hora" era total da sessão ÷ tempo
+  // da sessão — com horas de acumulado, uma caçada que piorou quase não mexia
+  // no número, e o começo da sessão pesava pra sempre. Agora o por hora é uma
+  // JANELA MÓVEL: a cada 30s guarda uma foto dos acumulados (XP e lucro) e a
+  // taxa é (agora − 15 min atrás) ÷ o tempo real entre as fotos.
+  //
+  // Tempo de RELÓGIO, incluindo cidade, venda e o entra-e-sai de renovar spawn
+  // seco (pedido explícito dele: esse vaivém é parte do ciclo, e zerar a cada
+  // saída jogaria a medição fora o tempo todo). A janela só recomeça quando a
+  // SESSÃO do analisador zera (troca de personagem, automação religada) ou o
+  // acumulado anda pra trás. Os TOTAIS (tempo, mortes, XP, custo, lucro)
+  // continuam acumulando a sessão inteira.
+  //
+  // Só conta free: a premium recebe o analisador do próprio jogo (tipo 41),
+  // que já vem certo.
+  const JANELA_FREE_MS = 15 * 60000;
+  const JANELA_FREE_AMOSTRA_MS = 30000;
+  // Menos que isso é ruído (uma morte faz o número pular).
+  const JANELA_FREE_MINIMA_MS = 2 * 60000;
+  const janelaFree = { amostras: [] }; // { t, xp, lucro }
+
+  function janelaFreeZerar() {
+    janelaFree.amostras.length = 0;
+  }
+
+  // Lucro acumulado da sessão free, pela mesma conta do resumo abaixo
+  // (loot a preço de NPC − custo de suprimento − desgaste).
+  function lucroFreeAcumulado() {
+    let valorNpc = 0;
+    for (const [itemId, info] of economia.loot) {
+      const npc = itemId === GOLD_COIN_ITEM_ID ? 1 : economia.precoNpc.get(itemId);
+      if (typeof npc === "number") valorNpc += npc * info.qtd;
+    }
+    return valorNpc - economia.custoTotal - economia.custoDesgaste;
+  }
+
+  function janelaFreeAmostrar(agora = Date.now()) {
+    const a = janelaFree.amostras;
+    const xp = economia.xp;
+    const lucro = lucroFreeAcumulado();
+    const ult = a[a.length - 1];
+    // Acumulado andou pra trás = a sessão zerou por outro caminho: recomeça.
+    if (ult && xp < ult.xp) a.length = 0;
+    const ultimo = a[a.length - 1];
+    if (!ultimo || agora - ultimo.t >= JANELA_FREE_AMOSTRA_MS) a.push({ t: agora, xp, lucro });
+    // A base é a foto mais recente que ainda tem 15 min ou mais de idade.
+    while (a.length > 1 && agora - a[1].t >= JANELA_FREE_MS) a.shift();
+  }
+
+  function janelaFreeTaxas(agora = Date.now()) {
+    const a = janelaFree.amostras;
+    if (!a.length) return { janelaMs: 0, xpHora: null, lucroHora: null };
+    const base = a[0];
+    const dt = agora - base.t;
+    if (dt < JANELA_FREE_MINIMA_MS) return { janelaMs: dt, xpHora: null, lucroHora: null };
+    return {
+      janelaMs: dt,
+      xpHora: Math.round(((economia.xp - base.xp) / dt) * 3600000),
+      lucroHora: Math.round(((lucroFreeAcumulado() - base.lucro) / dt) * 3600000),
+    };
+  }
+
+  // Relógio próprio (a mensagem de estado não tem ritmo fixo). Amostra dentro
+  // e fora da caçada; só na conta free.
+  let janelaFreeTimer = null;
+  function janelaFreeTick() {
+    if (economia.sessao) {
+      janelaFreeZerar();
+      return;
+    }
+    janelaFreeAmostrar();
+  }
+  function startJanelaFreeWatcher() {
+    if (janelaFreeTimer) return;
+    janelaFreeTimer = setInterval(() => perfWatcher("analisador-15min", JANELA_FREE_AMOSTRA_MS, "sempre", janelaFreeTick), JANELA_FREE_AMOSTRA_MS);
+  }
+
   function economiaParaEnvio() {
     const temPrecos = economia.precoNpc.size > 0;
     const s = economia.sessao;
@@ -3350,16 +3433,21 @@
       // custo dos débitos de gold, loot do 60 com a tabela do 57.
       resumo: (() => {
         const duracaoMs = economia.inicio ? Date.now() - economia.inicio : 0;
-        const horas = duracaoMs > 0 ? duracaoMs / 3600000 : 0;
         const lucro = valorNpc - economia.custoTotal - economia.custoDesgaste;
+        // v0.13.7 — por hora dos últimos 15 min (ver janelaFree), não mais
+        // total da sessão ÷ duração da sessão.
+        const janela = janelaFreeTaxas();
         return {
           duracaoMs,
           kills: economia.kills,
           xp: economia.xp,
           custo: economia.custoTotal + economia.custoDesgaste,
           lucro,
-          xpHora: horas > 0 ? Math.round(economia.xp / horas) : null,
-          lucroHora: horas > 0 ? Math.round(lucro / horas) : null,
+          xpHora: janela.xpHora,
+          lucroHora: janela.lucroHora,
+          // Quanto tempo a janela cobre de fato (até 15 min; menos no começo
+          // da caçada). O painel mostra isso no rótulo.
+          janelaMs: janela.janelaMs,
           vendas: economia.vendas,
           goldVendido: economia.goldVendido,
           // v0.11.24 — diagnóstico do próprio analisador. "Tudo zero" tem duas
@@ -8168,6 +8256,8 @@
     startTrainingWatcher();
     // v0.11.10 — config global do detector de spawn seco.
     startSpawnConfigWatcher();
+    // v0.13.7 — amostras da janela de 15 min do analisador (conta free).
+    startJanelaFreeWatcher();
     // v0.11.20 — retoma a gravação do protocolo se ela estava ligada antes do
     // reinício. Sem isto, a chave salva não serviria pra nada.
     if (loadState().diagEnabled) diagLigar(true, { disco: false });

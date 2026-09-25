@@ -40,6 +40,20 @@ app.setPath("userData", path.join(app.getPath("appData"), PASTA_DE_DADOS));
 // Nome exibido do produto (janela, notificações, diálogos).
 const NOME_DO_APP = "LazyHunts";
 
+// User-Agent global dos clientes do jogo.
+//
+// O padrão do Electron inclui uma identificação própria (`Electron/x.y.z`)
+// e pode incluir o nome/versão do aplicativo. Isso diferencia as requisições
+// das feitas pelo Chrome. O LazyHunts não precisa mandar nenhuma dessas marcas:
+// usa o formato reduzido oficial do Chrome para Windows, com apenas o major do
+// Chromium realmente embarcado no app. `userAgentFallback` é definido cedo e
+// vale para todos os WebContents e partições que não tenham override próprio —
+// portanto cobre todas as contas, a janela principal e popups de autenticação.
+const CHROME_MAJOR_VERSION = process.versions.chrome.split(".")[0];
+const CHROME_DESKTOP_USER_AGENT =
+  `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_MAJOR_VERSION}.0.0.0 Safari/537.36`;
+app.userAgentFallback = CHROME_DESKTOP_USER_AGENT;
+
 // v0.3.1 tentou usar `force-device-scale-factor` (linha de comando) pra
 // deixar o zoom reduzido mais nítido. REVERTIDO: esse switch é GLOBAL —
 // afeta TODOS os processos de renderização do app, incluindo a nossa

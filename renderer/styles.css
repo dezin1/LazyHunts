@@ -1816,6 +1816,10 @@ body {
 }
 .ecoRow.ecoTotal b { color: var(--success); }
 .ecoRow b.ecoNeg { color: var(--danger); }
+/* v0.13.7 — janela do por hora da conta free ("últimos 15 min") e o estado
+   inicial, antes de ter 2 min de amostra. */
+.ecoRow .ecoJanela { color: var(--text-muted); font-size: 11px; }
+.ecoRow b.ecoMedindo { color: var(--text-muted); font-weight: 400; font-style: italic; }
 .ecoUp { color: var(--accent); font-style: normal; font-size: 10.5px; }
 .ecoSub {
   margin-top: 12px;

@@ -2609,14 +2609,25 @@ function renderEconomia(st) {
   if (r) {
     const min = Math.floor(r.duracaoMs / 60000);
     const dur = min >= 60 ? `${Math.floor(min / 60)}h${String(min % 60).padStart(2, "0")}` : `${min}min`;
+    // v0.13.7 — conta free: o por hora é dos últimos 15 min (janela móvel no
+    // content-injected), então o rótulo diz a janela. `janelaMs` só existe
+    // nesse caminho; na premium (analisador do jogo) nada muda.
+    const temJanela = typeof r.janelaMs === "number";
+    const janelaMin = temJanela ? Math.max(1, Math.min(15, Math.round(r.janelaMs / 60000))) : 0;
+    const sufixo = temJanela ? ` <span class="ecoJanela">(últimos ${janelaMin} min)</span>` : "";
+    const linhaHora = (rotulo, valor, total) => {
+      const cls = total ? "ecoRow ecoTotal" : "ecoRow";
+      if (valor !== null) return `<div class="${cls}"><span>${rotulo}${sufixo}</span><b>${fmtNum(valor)}</b></div>`;
+      return temJanela ? `<div class="${cls}"><span>${rotulo}</span><b class="ecoMedindo">medindo…</b></div>` : "";
+    };
     const linhasResumo = [
       `<div class="ecoRow"><span>Tempo</span><b>${dur}</b></div>`,
       `<div class="ecoRow"><span>Mortes</span><b>${fmtNum(r.kills)}</b></div>`,
       `<div class="ecoRow"><span>XP</span><b>${fmtNum(r.xp)}</b></div>`,
-      r.xpHora !== null ? `<div class="ecoRow"><span>XP por hora</span><b>${fmtNum(r.xpHora)}</b></div>` : "",
+      linhaHora("XP por hora", r.xpHora, false),
       `<div class="ecoRow"><span>Custo</span><b class="ecoNeg">−${fmtNum(r.custo)}</b></div>`,
       `<div class="ecoRow ecoTotal"><span>Lucro</span><b>${fmtNum(r.lucro)}</b></div>`,
-      r.lucroHora !== null ? `<div class="ecoRow ecoTotal"><span>Lucro por hora</span><b>${fmtNum(r.lucroHora)}</b></div>` : "",
+      linhaHora("Lucro por hora", r.lucroHora, true),
     ];
     el.innerHTML = linhasResumo.join("") + detalheDoLoot(ec);
     return;

@@ -2,6 +2,43 @@
 
 Notas de contexto amplo do projeto (arquitetura, seletores, histórico de features) vivem no `CLAUDE.md` do projeto irmão `huntera-automacao`, seção "Feature: Auto Bestiary por fase (Ladder) — huntera-multiconta (Swag)" e "Desempenho do `huntera-multiconta`". Este arquivo, na raiz do próprio `huntera-multiconta`, guarda regras específicas deste repositório.
 
+## REGRA DE OURO — identidade dos clientes como Google Chrome (25/09/2026)
+
+Todos os clientes/contas abertos pelo LazyHunts devem se identificar no
+`User-Agent` **exclusivamente como Google Chrome de desktop no Windows**. Nunca
+expor no `User-Agent` o nome `LazyHunts`, o pacote `huntera-multiconta`, a marca
+`Electron` ou qualquer outro identificador próprio do aplicativo.
+
+Formato obrigatório:
+
+```text
+Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<versão-principal>.0.0.0 Safari/537.36
+```
+
+Regras de implementação e manutenção:
+
+1. `<versão-principal>` vem de `process.versions.chrome`, isto é, do Chromium
+   realmente embarcado no Electron. Nunca fixar manualmente um major específico.
+2. O override permanece global e deve ser configurado por
+   `app.userAgentFallback` **antes da criação de qualquer janela**. Assim ele
+   cobre todas as contas, partições e janelas de autenticação.
+3. Não criar `session.setUserAgent`, `webContents.setUserAgent`, atributo
+   `useragent` de `<webview>` nem outro override local que possa substituir ou
+   divergir do valor global.
+4. Nenhuma mudança futura de nome, versão, empacotamento, Electron ou sistema
+   operacional pode acrescentar `LazyHunts`, `huntera-multiconta` ou `Electron`
+   ao `User-Agent`.
+5. Antes de entregar qualquer mudança que toque `main.js`, criação de janelas,
+   sessões, webviews ou headers de rede, rodar obrigatoriamente:
+
+   ```bash
+   node scripts/teste-user-agent.mjs
+   ```
+
+   O teste confere o formato exato, a ausência das marcas proibidas, a ordem de
+   inicialização e a inexistência de overrides locais. Se ele falhar, a mudança
+   não pode ser entregue.
+
 ## Regra permanente — versionamento visível (TASK-004, 22/09/2026)
 
 Motivo: o app ficou em `0.12.4` por várias entregas seguidas (Bestiário inteiro, redesenho de UI, controle Iniciar/Pausar) porque nenhuma delas tocou `package.json`/`CHANGELOG.md`. Resultado: o André não tinha como dizer "estou testando qual build" — nem pra si mesmo, nem numa eventual conversa de suporte.
